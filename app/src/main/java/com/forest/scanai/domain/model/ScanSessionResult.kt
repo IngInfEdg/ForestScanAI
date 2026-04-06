@@ -10,17 +10,18 @@ data class ScanSessionResult(
     val maxWidth: Double,
     val points: List<Position>,
     val topPoints: List<Position>,
-    val trajectory: List<Location>, // Trayectoria GPS real del recorrido
-    val coverage: Float, // 0.0 a 1.0
+    val trajectory: List<Location>,
+    val observerPath: List<Position>,
+    val coverage: Float,
     val completeness: CompletenessLevel,
     val confidence: Float,
     val pointsCount: Int,
+    val arDistanceWalked: Double,
+    val gpsDistanceWalked: Double,
+    val gpsPointCount: Int,
+    val coveredSectors: Int,
+    val totalSectors: Int,
+    val missingSectors: List<Int>,
+    val guidanceSummary: String,
     val timestamp: Long = System.currentTimeMillis()
 )
-
-enum class CompletenessLevel {
-    INSUFFICIENT, // Menos de 20% o sin movimiento
-    PARTIAL,      // Captura frontal solamente
-    ACCEPTABLE,   // Recorrido de al menos 2 costados
-    COMPLETE      // Perímetro cerrado o casi cerrado
-}

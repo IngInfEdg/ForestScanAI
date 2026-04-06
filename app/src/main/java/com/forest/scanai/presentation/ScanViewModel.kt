@@ -6,27 +6,33 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.forest.scanai.core.ScanParams
 import com.forest.scanai.data.location.LocationProvider
+import com.forest.scanai.domain.engine.MeasurementCompletenessValidator
+import com.forest.scanai.domain.engine.MeasurementCoverageEvaluator
 import com.forest.scanai.domain.engine.PointCloudProcessor
+import com.forest.scanai.domain.engine.ScanGuidanceEngine
 import com.forest.scanai.domain.engine.VolumeCalculator
 import com.forest.scanai.domain.model.CompletenessLevel
 import com.forest.scanai.domain.model.ScanSessionResult
 import com.forest.scanai.domain.model.ScanUiState
-import com.google.ar.core.Frame
-import com.google.ar.core.TrackingState
 import io.github.sceneview.math.Position
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.pow
 import kotlin.math.sqrt
 
 class ScanViewModel(
     private val locationProvider: LocationProvider,
     private val params: ScanParams = ScanParams(),
     private val processor: PointCloudProcessor = PointCloudProcessor(params),
-    private val calculator: VolumeCalculator = VolumeCalculator(params)
+    private val calculator: VolumeCalculator = VolumeCalculator(params),
+    private val coverageEvaluator: MeasurementCoverageEvaluator = MeasurementCoverageEvaluator(),
+    private val completenessValidator: MeasurementCompletenessValidator = MeasurementCompletenessValidator(),
+    private val guidanceEngine: ScanGuidanceEngine = ScanGuidanceEngine()
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ScanUiState())
@@ -36,51 +42,27 @@ class ScanViewModel(
     val finalResult = _finalResult.asStateFlow()
 
     val points = mutableStateListOf<Position>()
-    private val voxelGrid = mutableSetOf<String>()
-    private var startPos: Position? = null
 
-    // Trayectoria GPS
-    private val _trajectory = mutableStateListOf<Location>()
+    private val voxelGrid = mutableSetOf<String>()
+    private val trajectory = mutableStateListOf<Location>()
+    private val observerPath = mutableStateListOf<Position>()
+
+    private var startPos: Position? = null
     private var gpsJob: Job? = null
 
     fun toggleMeasuring() {
-        val isMeasuring = _uiState.value.isMeasuring
-        if (!isMeasuring) {
-            startMeasurement()
-        } else {
-            stopMeasurement()
-        }
+        if (!_uiState.value.isMeasuring) startMeasurement() else stopMeasurement()
     }
 
     private fun startMeasurement() {
         reset()
         _uiState.update { it.copy(isMeasuring = true, error = null) }
-        startGpsTracking()
-    }
 
-    private fun stopMeasurement() {
-        val coverage = calculateCoverage()
-        val completeness = evaluateCompleteness(coverage)
-        
-        if (completeness == CompletenessLevel.INSUFFICIENT) {
-            _uiState.update { it.copy(error = "Recorrido insuficiente. Debe rodear más la pila.") }
-            // No detenemos isMeasuring para forzar a que siga caminando, 
-            // o bien detenemos y mostramos el error. 
-            // Por requerimiento de "bloqueo", impediremos el cierre exitoso.
-            return
-        }
-
-        _uiState.update { it.copy(isMeasuring = false) }
-        stopGpsTracking()
-        prepareFinalResult(coverage, completeness)
-    }
-
-    private fun startGpsTracking() {
         gpsJob = viewModelScope.launch {
-            while (true) {
-                locationProvider.getCurrentLocation()?.let { location ->
-                    if (_trajectory.isEmpty() || location.distanceTo(_trajectory.last()) > 1.0) {
-                        _trajectory.add(location)
+            while (isActive) {
+                locationProvider.getCurrentLocation()?.let { loc ->
+                    if (trajectory.isEmpty() || loc.distanceTo(trajectory.last()) > 1.5f) {
+                        trajectory.add(loc)
                     }
                 }
                 delay(2000)
@@ -88,111 +70,193 @@ class ScanViewModel(
         }
     }
 
-    private fun stopGpsTracking() {
+    private fun stopMeasurement() {
         gpsJob?.cancel()
-        gpsJob = null
-    }
 
-    private fun calculateCoverage(): Float {
-        if (points.isEmpty()) return 0f
-        val minX = points.minOf { it.x }
-        val maxX = points.maxOf { it.x }
-        val minZ = points.minOf { it.z }
-        val maxZ = points.maxOf { it.z }
-        
-        // Área proyectada en el suelo
-        val area = (maxX - minX) * (maxZ - minZ)
-        // Normalización experimental: 15m2 de base para una pila estándar
-        return (area / 15f).coerceIn(0f, 1f)
-    }
+        val coverageResult = coverageEvaluator.evaluateFromObserverPath(
+            observerPath = observerPath.toList(),
+            pilePoints = points.toList()
+        )
 
-    private fun evaluateCompleteness(coverage: Float): CompletenessLevel {
-        val gpsDist = calculateGpsDistance()
-        return when {
-            coverage > 0.7f && gpsDist > 12.0 -> CompletenessLevel.COMPLETE
-            coverage > 0.4f && gpsDist > 6.0 -> CompletenessLevel.ACCEPTABLE
-            coverage > 0.1f -> CompletenessLevel.PARTIAL
-            else -> CompletenessLevel.INSUFFICIENT
+        val gpsDistance = calculateGpsDistance()
+        val arDistance = calculateArDistance()
+
+        val completeness = completenessValidator.validate(
+            angularCoverage = coverageResult.coverageRatio,
+            coveredSectors = coverageResult.coveredSectors,
+            observerSamples = observerPath.size,
+            usefulPointCount = points.size,
+            arDistanceWalked = arDistance,
+            gpsDistanceWalked = gpsDistance
+        )
+
+        val guidance = guidanceEngine.buildMessage(
+            completeness = completeness,
+            missingSectors = coverageResult.missingSectors,
+            observerSamples = observerPath.size,
+            usefulPoints = points.size
+        )
+
+        if (completeness == CompletenessLevel.INSUFFICIENT || completeness == CompletenessLevel.PARTIAL) {
+            _uiState.update {
+                it.copy(
+                    isMeasuring = false,
+                    coveragePercentage = coverageResult.coverageRatio,
+                    coveredSectors = coverageResult.coveredSectors,
+                    totalSectors = coverageResult.totalSectors,
+                    gpsPointCount = trajectory.size,
+                    observerSampleCount = observerPath.size,
+                    gpsDistanceWalked = gpsDistance,
+                    arDistanceWalked = arDistance,
+                    completeness = completeness,
+                    guidanceMessage = guidance,
+                    canFinishMeasurement = false,
+                    error = "Medición incompleta. $guidance"
+                )
+            }
+            return
         }
-    }
 
-    private fun calculateGpsDistance(): Float {
-        var total = 0f
-        for (i in 0 until _trajectory.size - 1) {
-            total += _trajectory[i].distanceTo(_trajectory[i+1])
-        }
-        return total
-    }
-
-    private fun prepareFinalResult(coverage: Float, completeness: CompletenessLevel) {
         val result = calculator.calculate(points.toList())
-        val minX = points.minOf { it.x }
-        val maxX = points.maxOf { it.x }
-        val minZ = points.minOf { it.z }
-        val maxZ = points.maxOf { it.z }
-        
+
         _finalResult.value = ScanSessionResult(
             volume = result.volume,
-            length = (maxX - minX).toDouble(),
-            maxHeight = result.topPoints.maxOfOrNull { it.y.toDouble() } ?: 0.0,
-            maxWidth = (maxZ - minZ).toDouble(),
+            length = (points.maxOf { it.x } - points.minOf { it.x }).toDouble(),
+            maxHeight = result.topPoints.maxOfOrNull { it.y }?.toDouble() ?: 0.0,
+            maxWidth = (points.maxOf { it.z } - points.minOf { it.z }).toDouble(),
             points = points.toList(),
             topPoints = result.topPoints,
-            trajectory = _trajectory.toList(),
-            coverage = coverage,
+            trajectory = trajectory.toList(),
+            observerPath = observerPath.toList(),
+            coverage = coverageResult.coverageRatio,
             completeness = completeness,
-            confidence = 0.85f,
-            pointsCount = points.size
+            confidence = when (completeness) {
+                CompletenessLevel.COMPLETE -> 0.95f
+                CompletenessLevel.ACCEPTABLE -> 0.80f
+                else -> 0.50f
+            },
+            pointsCount = points.size,
+            arDistanceWalked = arDistance,
+            gpsDistanceWalked = gpsDistance,
+            gpsPointCount = trajectory.size,
+            coveredSectors = coverageResult.coveredSectors,
+            totalSectors = coverageResult.totalSectors,
+            missingSectors = coverageResult.missingSectors,
+            guidanceSummary = guidance
         )
+
+        _uiState.update {
+            it.copy(
+                isMeasuring = false,
+                coveragePercentage = coverageResult.coverageRatio,
+                coveredSectors = coverageResult.coveredSectors,
+                totalSectors = coverageResult.totalSectors,
+                gpsPointCount = trajectory.size,
+                observerSampleCount = observerPath.size,
+                gpsDistanceWalked = gpsDistance,
+                arDistanceWalked = arDistance,
+                completeness = completeness,
+                guidanceMessage = guidance,
+                canFinishMeasurement = true,
+                error = null
+            )
+        }
     }
 
-    fun onFrameUpdated(frame: Frame) {
+    fun onFrameUpdated(frame: com.google.ar.core.Frame) {
         _uiState.update { it.copy(trackingState = frame.camera.trackingState) }
-        
         if (!_uiState.value.isMeasuring) return
 
         val cameraPose = frame.camera.pose
         val currentPos = Position(cameraPose.tx(), cameraPose.ty(), cameraPose.tz())
-        
+
         if (startPos == null) startPos = currentPos
+
+        if (observerPath.isEmpty() || distanceBetween(observerPath.last(), currentPos) > 0.25) {
+            observerPath.add(currentPos)
+        }
 
         val newPoints = processor.extractFilteredPoints(frame, currentPos, voxelGrid)
         if (newPoints.isNotEmpty()) {
             points.addAll(newPoints)
-            updateMetrics(currentPos)
+        }
+
+        val calcResult = calculator.calculate(points.toList())
+        val rawDist = sqrt(
+            (currentPos.x - startPos!!.x).toDouble().pow(2.0) +
+                (currentPos.z - startPos!!.z).toDouble().pow(2.0)
+        ) * params.distanceCorrectionFactor
+
+        val coverageResult = coverageEvaluator.evaluateFromObserverPath(
+            observerPath = observerPath.toList(),
+            pilePoints = points.toList()
+        )
+
+        val gpsDistance = calculateGpsDistance()
+        val arDistance = calculateArDistance()
+
+        val completeness = completenessValidator.validate(
+            angularCoverage = coverageResult.coverageRatio,
+            coveredSectors = coverageResult.coveredSectors,
+            observerSamples = observerPath.size,
+            usefulPointCount = points.size,
+            arDistanceWalked = arDistance,
+            gpsDistanceWalked = gpsDistance
+        )
+
+        val guidance = guidanceEngine.buildMessage(
+            completeness = completeness,
+            missingSectors = coverageResult.missingSectors,
+            observerSamples = observerPath.size,
+            usefulPoints = points.size
+        )
+
+        _uiState.update {
+            it.copy(
+                stereoVolume = calcResult.volume,
+                netVolume = calcResult.volume * 0.45,
+                distance = if (it.distance == 0.0) rawDist else it.distance + params.emaAlpha * (rawDist - it.distance),
+                topPoints = calcResult.topPoints,
+                coveragePercentage = coverageResult.coverageRatio,
+                coveredSectors = coverageResult.coveredSectors,
+                totalSectors = coverageResult.totalSectors,
+                gpsPointCount = trajectory.size,
+                observerSampleCount = observerPath.size,
+                gpsDistanceWalked = gpsDistance,
+                arDistanceWalked = arDistance,
+                completeness = completeness,
+                guidanceMessage = guidance,
+                canFinishMeasurement = completeness == CompletenessLevel.ACCEPTABLE || completeness == CompletenessLevel.COMPLETE,
+                error = null
+            )
         }
     }
 
-    private fun updateMetrics(currentPos: Position) {
-        val result = calculator.calculate(points.toList())
-        
-        val dx = currentPos.x - startPos!!.x
-        val dz = currentPos.z - startPos!!.z
-        val rawDist = sqrt((dx * dx + dz * dz).toDouble()) * params.distanceCorrectionFactor
-        
-        val currentDistance = _uiState.value.distance
-        val smoothDist = if (currentDistance == 0.0) rawDist else currentDistance + params.emaAlpha * (rawDist - currentDistance)
+    private fun calculateGpsDistance(): Double {
+        if (trajectory.size < 2) return 0.0
+        return trajectory.zipWithNext { a, b -> a.distanceTo(b).toDouble() }.sum()
+    }
 
-        _uiState.update { it.copy(
-            stereoVolume = result.volume,
-            netVolume = result.volume * 0.45,
-            distance = smoothDist,
-            topPoints = result.topPoints,
-            coveragePercentage = calculateCoverage()
-        ) }
+    private fun calculateArDistance(): Double {
+        if (observerPath.size < 2) return 0.0
+        return observerPath.zipWithNext { a, b -> distanceBetween(a, b) }.sum()
+    }
+
+    private fun distanceBetween(a: Position, b: Position): Double {
+        return sqrt(
+            (a.x - b.x).toDouble().pow(2.0) +
+                (a.z - b.z).toDouble().pow(2.0)
+        )
     }
 
     fun reset() {
         points.clear()
         voxelGrid.clear()
-        _trajectory.clear()
+        trajectory.clear()
+        observerPath.clear()
         startPos = null
+        gpsJob?.cancel()
         _uiState.value = ScanUiState()
         _finalResult.value = null
-        stopGpsTracking()
-    }
-
-    fun clearError() {
-        _uiState.update { it.copy(error = null) }
     }
 }

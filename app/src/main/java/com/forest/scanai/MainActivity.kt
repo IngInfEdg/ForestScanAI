@@ -2,7 +2,6 @@ package com.forest.scanai
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.opengl.Matrix
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -15,10 +14,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.forest.scanai.data.export.CsvExporter
 import com.forest.scanai.data.location.LocationProvider
@@ -27,19 +27,26 @@ import com.forest.scanai.presentation.ScanViewModel
 import com.forest.scanai.ui.ScanReview3DScreen
 import com.forest.scanai.ui.ScanScreen
 import com.forest.scanai.ui.theme.ForestScanAITheme
-import io.github.sceneview.math.Position
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    private val viewModel: ScanViewModel by viewModels()
+    
+    private val locationProvider by lazy { LocationProvider(applicationContext) }
+    private val csvExporter by lazy { CsvExporter(applicationContext) }
+
+    private val viewModel: ScanViewModel by viewModels {
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                return ScanViewModel(locationProvider) as T
+            }
+        }
+    }
+    
     private val reviewViewModel: ScanReviewViewModel by viewModels()
-    private lateinit var csvExporter: CsvExporter
-    private lateinit var locationProvider: LocationProvider
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        csvExporter = CsvExporter(this)
-        locationProvider = LocationProvider(this)
 
         setContent {
             ForestScanAITheme {
@@ -128,29 +135,4 @@ fun MainScreen(
             }
         }
     }
-}
-
-/**
- * Proyecta un punto 3D a coordenadas 2D de pantalla.
- */
-fun projectPointToScreen(
-    pos: Position,
-    viewMatrix: FloatArray,
-    projMatrix: FloatArray,
-    width: Float,
-    height: Float
-): Offset? {
-    val worldCoord = floatArrayOf(pos.x, pos.y, pos.z, 1.0f)
-    val vpMatrix = FloatArray(16)
-    Matrix.multiplyMM(vpMatrix, 0, projMatrix, 0, viewMatrix, 0)
-    
-    val clipCoord = FloatArray(4)
-    Matrix.multiplyMV(clipCoord, 0, vpMatrix, 0, worldCoord, 0)
-    
-    if (clipCoord[3] <= 0) return null
-    
-    val x = (clipCoord[0] / clipCoord[3] + 1.0f) / 2.0f * width
-    val y = (1.0f - clipCoord[1] / clipCoord[3]) / 2.0f * height
-    
-    return Offset(x, y)
 }

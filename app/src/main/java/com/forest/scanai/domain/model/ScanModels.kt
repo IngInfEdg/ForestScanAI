@@ -1,7 +1,7 @@
 package com.forest.scanai.domain.model
 
-import io.github.sceneview.math.Position
 import com.google.ar.core.TrackingState
+import io.github.sceneview.math.Position
 
 data class ScanUiState(
     val stereoVolume: Double = 0.0,
@@ -13,10 +13,15 @@ data class ScanUiState(
     val isSaving: Boolean = false,
     val isMeasuring: Boolean = false,
     val error: String? = null,
-    val distanceWalked: Double = 0.0,
+
+    val arDistanceWalked: Double = 0.0,
+    val gpsDistanceWalked: Double = 0.0,
     val gpsPointCount: Int = 0,
+    val observerSampleCount: Int = 0,
+    val coveredSectors: Int = 0,
+    val totalSectors: Int = 12,
     val completeness: CompletenessLevel = CompletenessLevel.INSUFFICIENT,
-    val guidanceMessage: String = "Inicie el escaneo frente a la pila",
+    val guidanceMessage: String = "Inicia el recorrido alrededor de la pila.",
     val canFinishMeasurement: Boolean = false
 )
 
@@ -24,3 +29,7 @@ data class ScanResult(
     val volume: Double,
     val topPoints: List<Position>
 )
+
+enum class CompletenessLevel {
+    INSUFFICIENT, PARTIAL, ACCEPTABLE, COMPLETE
+}
