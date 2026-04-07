@@ -61,11 +61,9 @@ fun ScanScreen(
             }
         )
 
-        // Overlay de Visualización: Pintado de Cobertura + Línea de Contorno
+        // Visualización de puntos y contorno
         Canvas(modifier = Modifier.fillMaxSize()) {
             if (uiState.trackingState == TrackingState.TRACKING) {
-                
-                // 1. DIBUJAR "PINTURA" DE COBERTURA (Puntos Verdes)
                 points.forEach { pos ->
                     projectPointToScreen(pos, viewMatrix, projMatrix, size.width, size.height)?.let { offset ->
                         drawCircle(
@@ -76,7 +74,6 @@ fun ScanScreen(
                     }
                 }
 
-                // 2. DIBUJAR LÍNEA DE CONTORNO (Roja)
                 if (uiState.topPoints.size > 1) {
                     val screenPoints: List<Offset> = uiState.topPoints.mapNotNull { pos ->
                         projectPointToScreen(pos, viewMatrix, projMatrix, size.width, size.height)
@@ -99,53 +96,59 @@ fun ScanScreen(
             }
         }
 
-        // HUD Overlay
+        // HUD Overlay con los nuevos parámetros
         Column(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(24.dp)
-                .background(Color.Black.copy(alpha = 0.7f), shape = MaterialTheme.shapes.medium)
                 .padding(16.dp)
+                .background(Color.Black.copy(alpha = 0.7f), shape = MaterialTheme.shapes.medium)
+                .padding(12.dp)
         ) {
-            HUDMetricItem("Distancia", "${"%.2f".format(uiState.distance)} m")
-            HUDMetricItem("Volumen Estéreo", "${"%.2f".format(uiState.stereoVolume)} m³")
-            HUDMetricItem("Volumen Neto", "${"%.2f".format(uiState.netVolume)} m³")
+            Text("Volumen Neto: ${"%.2f".format(uiState.netVolume)} m³", color = Color.White, fontSize = 18.sp)
+            Text("Cobertura: ${(uiState.coveragePercentage * 100).toInt()}%", color = Color.Cyan)
+            Text("Sectores: ${uiState.coveredSectors}/${uiState.totalSectors}", color = Color.Cyan)
+            Text("Recorrido AR: ${"%.1f".format(uiState.arDistanceWalked)} m", color = Color.LightGray, fontSize = 12.sp)
+            Text("Recorrido GPS: ${"%.1f".format(uiState.gpsDistanceWalked)} m", color = Color.LightGray, fontSize = 12.sp)
+            Text("GPS válidos: ${uiState.gpsPointCount}", color = Color.LightGray, fontSize = 12.sp)
+            Text("Muestras AR: ${uiState.observerSampleCount}", color = Color.LightGray, fontSize = 12.sp)
             
-            if (uiState.trackingState != TrackingState.TRACKING) {
-                Text("⚠️ Buscando superficie...", color = Color.Yellow, fontSize = 12.sp)
-            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Estado: ${uiState.completeness}", color = if(uiState.canFinishMeasurement) Color.Green else Color.Yellow, fontSize = 14.sp)
+            Text("Guía: ${uiState.guidanceMessage}", color = Color.White, fontSize = 12.sp, lineHeight = 16.sp)
         }
 
-        // Controls
+        // Controles de Medición
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 40.dp)
+                .padding(bottom = 32.dp)
                 .fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Botón de Inicio / Detener Medición
+            if (uiState.error != null) {
+                Surface(
+                    color = Color.Red.copy(alpha = 0.8f),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                ) {
+                    Text(uiState.error!!, color = Color.White, modifier = Modifier.padding(8.dp), fontSize = 12.sp)
+                }
+            }
+
             Button(
                 onClick = { viewModel.toggleMeasuring() },
-                modifier = Modifier
-                    .fillMaxWidth(0.6f)
-                    .height(56.dp),
+                enabled = uiState.isMeasuring || uiState.canFinishMeasurement,
+                modifier = Modifier.fillMaxWidth(0.7f).height(56.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (uiState.isMeasuring) Color.Red else Color(0xFF4CAF50)
                 )
             ) {
-                Text(
-                    text = if (uiState.isMeasuring) "DETENER ESCANEO" else "INICIAR ESCANEO",
-                    fontSize = 18.sp
-                )
+                Text(if (uiState.isMeasuring) "DETENER ESCANEO" else "FINALIZAR")
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Button(
                     onClick = { viewModel.reset() },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
@@ -161,13 +164,5 @@ fun ScanScreen(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun HUDMetricItem(label: String, value: String) {
-    Column(modifier = Modifier.padding(vertical = 4.dp)) {
-        Text(text = label, color = Color.LightGray, fontSize = 11.sp)
-        Text(text = value, color = Color.White, fontSize = 26.sp, style = MaterialTheme.typography.headlineMedium)
     }
 }
