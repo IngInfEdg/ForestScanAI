@@ -1,6 +1,7 @@
 package com.forest.scanai.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -31,12 +35,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.forest.scanai.core.projectPointToScreen
+import com.forest.scanai.domain.model.ScanSessionResult
 import com.forest.scanai.domain.model.ScanUiState
 import com.forest.scanai.presentation.ScanViewModel
 import com.forest.scanai.presentation.components.MeasurementCompactCard
+import com.forest.scanai.presentation.components.SegmentedPile3DView
 import com.google.ar.core.Config
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ArSceneView
+import java.util.Locale
 
 @Composable
 fun ScanScreen(
@@ -44,6 +51,7 @@ fun ScanScreen(
     onSaveReport: (ScanUiState) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val finalResult by viewModel.finalResult.collectAsState()
     val points = viewModel.points
     var viewMatrix by remember { mutableStateOf(FloatArray(16)) }
     var projMatrix by remember { mutableStateOf(FloatArray(16)) }
@@ -79,7 +87,7 @@ fun ScanScreen(
         )
 
         Canvas(modifier = Modifier.fillMaxSize()) {
-            if (uiState.trackingState == TrackingState.TRACKING) {
+            if (uiState.trackingState == TrackingState.TRACKING && finalResult == null) {
                 points.forEach { pos ->
                     projectPointToScreen(
                         pos,
@@ -125,12 +133,21 @@ fun ScanScreen(
             }
         }
 
-        MeasurementCompactCard(
-            uiState = uiState,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(16.dp)
-        )
+        if (finalResult == null) {
+            MeasurementCompactCard(
+                uiState = uiState,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(16.dp)
+            )
+        } else {
+            ResultOverlay(
+                result = finalResult,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(16.dp)
+            )
+        }
 
         Column(
             modifier = Modifier
@@ -139,7 +156,7 @@ fun ScanScreen(
                 .fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (uiState.error != null) {
+            if (uiState.error != null && finalResult == null) {
                 Surface(
                     color = Color.Red.copy(alpha = 0.8f),
                     shape = MaterialTheme.shapes.small,
@@ -154,70 +171,184 @@ fun ScanScreen(
                 }
             }
 
-            if (!uiState.isMeasuring) {
-                Button(
-                    onClick = { viewModel.toggleMeasuring() },
-                    modifier = Modifier
-                        .fillMaxWidth(0.7f)
-                        .height(56.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF1976D2)
-                    )
-                ) {
-                    Text("Iniciar medición")
-                }
+            if (finalResult == null) {
+                if (!uiState.isMeasuring) {
+                    Button(
+                        onClick = { viewModel.toggleMeasuring() },
+                        modifier = Modifier
+                            .fillMaxWidth(0.7f)
+                            .height(56.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF1976D2)
+                        )
+                    ) {
+                        Text("Iniciar medición")
+                    }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Button(
+                            onClick = { viewModel.reset() },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
+                        ) {
+                            Text("Reset")
+                        }
+
+                        Button(
+                            onClick = { onSaveReport(uiState) },
+                            enabled = uiState.stereoVolume > 0,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF388E3C))
+                        ) {
+                            Text("Guardar CSV")
+                        }
+                    }
+                } else {
+                    Button(
+                        onClick = { viewModel.toggleMeasuring() },
+                        enabled = true,
+                        modifier = Modifier
+                            .fillMaxWidth(0.7f)
+                            .height(56.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (uiState.canFinishMeasurement) {
+                                Color(0xFF2E7D32)
+                            } else {
+                                Color.Red
+                            }
+                        )
+                    ) {
+                        Text(
+                            if (uiState.canFinishMeasurement) {
+                                "Finalizar medición"
+                            } else {
+                                "Detener escaneo"
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     Button(
                         onClick = { viewModel.reset() },
                         colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
                     ) {
-                        Text("Reset")
+                        Text("Cancelar")
                     }
-
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     Button(
                         onClick = { onSaveReport(uiState) },
-                        enabled = uiState.stereoVolume > 0,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF388E3C))
                     ) {
                         Text("Guardar CSV")
                     }
-                }
-            } else {
-                Button(
-                    onClick = { viewModel.toggleMeasuring() },
-                    enabled = true,
-                    modifier = Modifier
-                        .fillMaxWidth(0.7f)
-                        .height(56.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (uiState.canFinishMeasurement) {
-                            Color(0xFF2E7D32)
-                        } else {
-                            Color.Red
-                        }
-                    )
-                ) {
-                    Text(
-                        if (uiState.canFinishMeasurement) {
-                            "Finalizar medición"
-                        } else {
-                            "Detener escaneo"
-                        }
-                    )
-                }
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Button(
-                    onClick = { viewModel.reset() },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
-                ) {
-                    Text("Cancelar")
+                    Button(
+                        onClick = { viewModel.reset() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
+                    ) {
+                        Text("Nueva medición")
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun ResultOverlay(
+    result: ScanSessionResult?,
+    modifier: Modifier = Modifier
+) {
+    if (result == null) return
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                color = Color.Black.copy(alpha = 0.72f),
+                shape = RoundedCornerShape(20.dp)
+            )
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text(
+            text = "Resultado de medición",
+            color = Color.White,
+            style = MaterialTheme.typography.titleMedium
+        )
+
+        Text(
+            text = "Volumen: ${formatDouble(result.volume)} m³",
+            color = Color(0xFF35D07F),
+            style = MaterialTheme.typography.bodyLarge
+        )
+
+        Text(
+            text = "Largo: ${formatDouble(result.length)} m  •  Ancho: ${formatDouble(result.maxWidth)} m",
+            color = Color.White,
+            style = MaterialTheme.typography.bodyMedium
+        )
+
+        Text(
+            text = "Altura máxima: ${formatDouble(result.maxHeight)} m",
+            color = Color.White,
+            style = MaterialTheme.typography.bodyMedium
+        )
+
+        Text(
+            text = "Altura P95: ${formatDouble(result.p95PileHeight)} m  •  Media: ${formatDouble(result.meanPileHeight)} m",
+            color = Color.White,
+            style = MaterialTheme.typography.bodyMedium
+        )
+
+        Text(
+            text = "Suelo ref.: ${formatDouble(result.groundReference)} m  •  Base pila: ${formatDouble(result.pileBaseReference)} m",
+            color = Color(0xFFD7CCC8),
+            style = MaterialTheme.typography.bodyMedium
+        )
+
+        Text(
+            text = "Modelo 3D: ${formatDouble(result.reviewModelWidth.toDouble())} x ${formatDouble(result.reviewModelHeight.toDouble())} x ${formatDouble(result.reviewModelDepth.toDouble())} m",
+            color = Color(0xFFB3E5FC),
+            style = MaterialTheme.typography.bodyMedium
+        )
+
+        Text(
+            text = "Cobertura: ${(result.coverage * 100f).toInt()}%  •  Sectores: ${result.coveredSectors}/${result.totalSectors}",
+            color = Color(0xFF00E5FF),
+            style = MaterialTheme.typography.bodyMedium
+        )
+
+        Text(
+            text = "Estado: ${result.completeness}",
+            color = when (result.completeness.name) {
+                "COMPLETE" -> Color(0xFF4CAF50)
+                "ACCEPTABLE" -> Color(0xFFFFC107)
+                "PARTIAL" -> Color(0xFFFF9800)
+                else -> Color(0xFFF44336)
+            },
+            style = MaterialTheme.typography.bodyMedium
+        )
+
+        Text(
+            text = result.guidanceSummary,
+            color = Color.White,
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        SegmentedPile3DView(
+            points = result.reviewModelPoints,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(280.dp)
+        )
+    }
+}
+
+private fun formatDouble(value: Double): String {
+    return String.format(Locale.US, "%.2f", value)
 }
