@@ -1,5 +1,6 @@
 package com.forest.scanai.presentation
-
+import com.forest.scanai.domain.engine.GroundPileSegmenter
+import com.forest.scanai.domain.engine.PointCloudReviewModelBuilder
 import android.location.Location
 import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.ViewModel
@@ -9,6 +10,8 @@ import com.forest.scanai.data.location.LocationProvider
 import com.forest.scanai.domain.engine.MeasurementCompletenessValidator
 import com.forest.scanai.domain.engine.MeasurementCoverageEvaluator
 import com.forest.scanai.domain.engine.PileAxisEstimator
+import com.forest.scanai.domain.engine.PileCoverageQualityEvaluator
+import com.forest.scanai.domain.engine.PileCoverageQualityLevel
 import com.forest.scanai.domain.engine.PointCloudProcessor
 import com.forest.scanai.domain.engine.ScanGuidanceEngine
 import com.forest.scanai.domain.engine.VolumeCalculator
@@ -32,10 +35,14 @@ class ScanViewModel(
     private val axisEstimator: PileAxisEstimator = PileAxisEstimator(),
     private val calculator: VolumeCalculator = VolumeCalculator(params, axisEstimator),
     private val coverageEvaluator: MeasurementCoverageEvaluator = MeasurementCoverageEvaluator(),
-    private val completenessValidator: MeasurementCompletenessValidator = MeasurementCompletenessValidator(),
+    private val pileCoverageQualityEvaluator: PileCoverageQualityEvaluator =
+        PileCoverageQualityEvaluator(axisEstimator),
+    private val completenessValidator: MeasurementCompletenessValidator =
+        MeasurementCompletenessValidator(),
     private val guidanceEngine: ScanGuidanceEngine = ScanGuidanceEngine()
 ) : ViewModel() {
-
+    private val segmenter: GroundPileSegmenter = GroundPileSegmenter(axisEstimator)
+    private val reviewBuilder: PointCloudReviewModelBuilder = PointCloudReviewModelBuilder()
     private val _uiState = MutableStateFlow(ScanUiState())
     val uiState = _uiState.asStateFlow()
 
@@ -65,7 +72,7 @@ class ScanViewModel(
             it.copy(
                 isMeasuring = true,
                 error = null,
-                guidanceMessage = "Comienza a rodear la pila manteniendo la cámara apuntando al material."
+                guidanceMessage = "Rodea la pila para iniciar la medición."
             )
         }
 
@@ -137,6 +144,61 @@ class ScanViewModel(
 
         val result = calculator.calculate(currentPoints)
         val axisResult = axisEstimator.estimate(currentPoints)
+        val cloudQuality = pileCoverageQualityEvaluator.evaluate(currentPoints)
+
+// 🔥 NUEVO — segmentación suelo vs pila
+        val segmented = segmenter.segment(currentPoints)
+
+// 🔥 NUEVO — modelo 3D
+        val reviewModel = segmented?.let { reviewBuilder.build(it) }
+
+// 🔥 NUEVO — alturas reales
+        val heightSummary = segmented?.heightSummary
+
+        val groundPoints = segmented?.groundPoints ?: emptyList()
+        val pilePoints = segmented?.pilePoints ?: currentPoints
+
+        val maxHeight = heightSummary?.maxHeight
+            ?: result.topPoints.maxOfOrNull { it.y }?.toDouble() ?: 0.0
+
+        val adjustedCompleteness = when {
+            cloudQuality == null -> completeness
+
+            completeness == CompletenessLevel.COMPLETE &&
+                    cloudQuality.qualityLevel != PileCoverageQualityLevel.COMPLETE -> {
+                CompletenessLevel.ACCEPTABLE
+            }
+
+            completeness == CompletenessLevel.ACCEPTABLE &&
+                    cloudQuality.qualityLevel == PileCoverageQualityLevel.POOR -> {
+                CompletenessLevel.PARTIAL
+            }
+
+            completeness == CompletenessLevel.COMPLETE &&
+                    cloudQuality.qualityLevel == PileCoverageQualityLevel.FAIR -> {
+                CompletenessLevel.PARTIAL
+            }
+
+            else -> completeness
+        }
+
+        val adjustedGuidance = buildString {
+            append(guidance)
+
+            if (cloudQuality != null) {
+                if (!cloudQuality.edgeCoverageStart || !cloudQuality.edgeCoverageEnd) {
+                    append(" Falta cubrir uno o ambos extremos de la pila.")
+                }
+
+                if (cloudQuality.verticalCoverageRatio < 0.50f) {
+                    append(" Falta capturar mejor la altura del material.")
+                }
+
+                if (cloudQuality.longitudinalCoverageRatio < 0.70f) {
+                    append(" La nube aún no cubre bien todo el largo de la pila.")
+                }
+            }
+        }
 
         val length = axisResult?.length
             ?: if (currentPoints.isNotEmpty()) {
@@ -152,32 +214,56 @@ class ScanViewModel(
                 0.0
             }
 
+        val finalConfidence = (
+                when (adjustedCompleteness) {
+                    CompletenessLevel.COMPLETE -> 0.95f
+                    CompletenessLevel.ACCEPTABLE -> 0.80f
+                    CompletenessLevel.PARTIAL -> 0.60f
+                    CompletenessLevel.INSUFFICIENT -> 0.40f
+                } - (cloudQuality?.confidencePenalty ?: 0f)
+                ).coerceIn(0.20f, 0.95f)
+
         _finalResult.value = ScanSessionResult(
             volume = result.volume,
             length = length,
-            maxHeight = result.topPoints.maxOfOrNull { it.y }?.toDouble() ?: 0.0,
+            maxHeight = maxHeight,
             maxWidth = maxWidth,
+
             points = currentPoints,
             topPoints = result.topPoints,
+
             trajectory = trajectory.toList(),
             observerPath = observerPath.toList(),
+
             coverage = coverageResult.coverageRatio,
-            completeness = completeness,
-            confidence = when (completeness) {
-                CompletenessLevel.COMPLETE -> 0.95f
-                CompletenessLevel.ACCEPTABLE -> 0.80f
-                else -> 0.50f
-            },
+            completeness = adjustedCompleteness,
+            confidence = finalConfidence,
+
             pointsCount = currentPoints.size,
             arDistanceWalked = arDistance,
             gpsDistanceWalked = gpsDistance,
             gpsPointCount = trajectory.size,
+
             coveredSectors = coverageResult.coveredSectors,
             totalSectors = coverageResult.totalSectors,
             missingSectors = coverageResult.missingSectors,
-            guidanceSummary = guidance
-        )
 
+            guidanceSummary = adjustedGuidance,
+
+            // 🔥 NUEVO
+            groundPoints = groundPoints,
+            pileOnlyPoints = pilePoints,
+
+            groundReference = heightSummary?.groundReference ?: 0.0,
+            pileBaseReference = heightSummary?.pileBaseReference ?: 0.0,
+            meanPileHeight = heightSummary?.meanHeight ?: 0.0,
+            p95PileHeight = heightSummary?.p95Height ?: 0.0,
+
+            reviewModelPoints = reviewModel?.points ?: emptyList(),
+            reviewModelWidth = reviewModel?.width ?: 0f,
+            reviewModelHeight = reviewModel?.height ?: 0f,
+            reviewModelDepth = reviewModel?.depth ?: 0f
+        )
         _uiState.update {
             it.copy(
                 isMeasuring = false,
@@ -188,9 +274,10 @@ class ScanViewModel(
                 observerSampleCount = observerPath.size,
                 gpsDistanceWalked = gpsDistance,
                 arDistanceWalked = arDistance,
-                completeness = completeness,
-                guidanceMessage = guidance,
-                canFinishMeasurement = true,
+                completeness = adjustedCompleteness,
+                guidanceMessage = adjustedGuidance,
+                canFinishMeasurement = adjustedCompleteness == CompletenessLevel.ACCEPTABLE ||
+                        adjustedCompleteness == CompletenessLevel.COMPLETE,
                 error = null
             )
         }
@@ -238,29 +325,72 @@ class ScanViewModel(
     }
 
     private fun refreshMeasurementState() {
+        val currentPoints = points.toList()
+
         val coverageResult = coverageEvaluator.evaluateFromObserverPath(
             observerPath = observerPath.toList(),
-            pilePoints = points.toList()
+            pilePoints = currentPoints
         )
 
         val gpsDistance = calculateGpsDistance()
         val arDistance = calculateArDistance()
 
-        val completeness = completenessValidator.validate(
+        val baseCompleteness = completenessValidator.validate(
             angularCoverage = coverageResult.coverageRatio,
             coveredSectors = coverageResult.coveredSectors,
             observerSamples = observerPath.size,
-            usefulPointCount = points.size,
+            usefulPointCount = currentPoints.size,
             arDistanceWalked = arDistance,
             gpsDistanceWalked = gpsDistance
         )
 
+        val cloudQuality = pileCoverageQualityEvaluator.evaluate(currentPoints)
+
+        val adjustedCompleteness = when {
+            cloudQuality == null -> baseCompleteness
+
+            baseCompleteness == CompletenessLevel.COMPLETE &&
+                    cloudQuality.qualityLevel != PileCoverageQualityLevel.COMPLETE -> {
+                CompletenessLevel.ACCEPTABLE
+            }
+
+            baseCompleteness == CompletenessLevel.ACCEPTABLE &&
+                    cloudQuality.qualityLevel == PileCoverageQualityLevel.POOR -> {
+                CompletenessLevel.PARTIAL
+            }
+
+            baseCompleteness == CompletenessLevel.COMPLETE &&
+                    cloudQuality.qualityLevel == PileCoverageQualityLevel.FAIR -> {
+                CompletenessLevel.PARTIAL
+            }
+
+            else -> baseCompleteness
+        }
+
         val guidance = guidanceEngine.buildMessage(
-            completeness = completeness,
+            completeness = adjustedCompleteness,
             missingSectors = coverageResult.missingSectors,
             observerSamples = observerPath.size,
-            usefulPoints = points.size
+            usefulPoints = currentPoints.size
         )
+
+        val adjustedGuidance = buildString {
+            append(guidance)
+
+            if (cloudQuality != null) {
+                if (!cloudQuality.edgeCoverageStart || !cloudQuality.edgeCoverageEnd) {
+                    append(" Falta cubrir uno o ambos extremos de la pila.")
+                }
+
+                if (cloudQuality.verticalCoverageRatio < 0.50f) {
+                    append(" Falta capturar mejor la altura del material.")
+                }
+
+                if (cloudQuality.longitudinalCoverageRatio < 0.70f) {
+                    append(" La nube aún no cubre bien todo el largo de la pila.")
+                }
+            }
+        }
 
         _uiState.update {
             it.copy(
@@ -271,10 +401,10 @@ class ScanViewModel(
                 observerSampleCount = observerPath.size,
                 gpsDistanceWalked = gpsDistance,
                 arDistanceWalked = arDistance,
-                completeness = completeness,
-                guidanceMessage = guidance,
-                canFinishMeasurement = completeness == CompletenessLevel.ACCEPTABLE ||
-                        completeness == CompletenessLevel.COMPLETE
+                completeness = adjustedCompleteness,
+                guidanceMessage = adjustedGuidance,
+                canFinishMeasurement = adjustedCompleteness == CompletenessLevel.ACCEPTABLE ||
+                        adjustedCompleteness == CompletenessLevel.COMPLETE
             )
         }
     }

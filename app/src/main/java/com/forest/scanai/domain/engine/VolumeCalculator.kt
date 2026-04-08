@@ -20,6 +20,13 @@ class VolumeCalculator(
         val cross: Float
     )
 
+    private data class SliceMetrics(
+        val area: Double,
+        val crestY: Float,
+        val groundY: Float,
+        val isUseful: Boolean
+    )
+
     fun calculate(points: List<Position>): ScanResult {
         if (points.size < 500) return ScanResult(0.0, emptyList())
 
@@ -34,7 +41,7 @@ class VolumeCalculator(
             )
         }
 
-        val sliceWidth = params.sliceWidth.toFloat().coerceAtLeast(0.05f)
+        val sliceWidth = params.sliceWidth.toFloat().coerceAtLeast(0.12f)
         val totalLength = (axis.maxAlong - axis.minAlong).coerceAtLeast(0.01f)
         val numSlices = max(1, ceil(totalLength / sliceWidth).toInt())
 
@@ -47,41 +54,12 @@ class VolumeCalculator(
             val centerAlong = (startAlong + endAlong) / 2f
 
             val pointsInSlice = projectedPoints.filter { it.along in startAlong..endAlong }
+            val metrics = evaluateSlice(pointsInSlice)
 
-            if (pointsInSlice.size < 20) {
-                topPoints.add(axisEstimator.pointOnAxis(axis, centerAlong, 0f))
-                continue
-            }
+            sliceAreas[sliceIndex] = metrics.area
 
-            val ys = pointsInSlice.map { it.source.y }.sorted()
-            val sliceGround = percentile(ys, 0.12f)
-            val sliceTop = percentile(ys, 0.88f)
-            val sliceHeight = (sliceTop - sliceGround).toDouble()
-
-            if (sliceHeight <= params.groundMargin) {
-                topPoints.add(axisEstimator.pointOnAxis(axis, centerAlong, sliceGround))
-                continue
-            }
-
-            val crossValues = pointsInSlice.map { it.cross }.sorted()
-            val crossMin = percentile(crossValues, 0.10f)
-            val crossMax = percentile(crossValues, 0.90f)
-            val effectiveWidth = (crossMax - crossMin).toDouble().coerceAtLeast(0.0)
-
-            topPoints.add(axisEstimator.pointOnAxis(axis, centerAlong, sliceTop))
-
-            if (effectiveWidth <= 0.05) {
-                continue
-            }
-
-            val area = integrateSliceArea(
-                pointsInSlice = pointsInSlice,
-                crossMin = crossMin,
-                crossMax = crossMax,
-                fallbackHeight = sliceHeight
-            )
-
-            sliceAreas[sliceIndex] = area
+            val topY = if (metrics.isUseful) metrics.crestY else metrics.groundY
+            topPoints.add(axisEstimator.pointOnAxis(axis, centerAlong, topY))
         }
 
         val smoothedTopPoints = smoothTopPoints(topPoints)
@@ -105,17 +83,86 @@ class VolumeCalculator(
         )
     }
 
+    private fun evaluateSlice(pointsInSlice: List<ProjectedPoint>): SliceMetrics {
+        if (pointsInSlice.size < 20) {
+            return SliceMetrics(
+                area = 0.0,
+                crestY = 0f,
+                groundY = 0f,
+                isUseful = false
+            )
+        }
+
+        val ys = pointsInSlice.map { it.source.y }.sorted()
+        val sliceGround = percentile(ys, 0.10f)
+        val pileBase = percentile(ys, 0.22f)
+        val crestY = percentile(ys, 0.96f)
+
+        val rawHeight = (crestY - sliceGround).toDouble()
+        if (rawHeight <= params.groundMargin) {
+            return SliceMetrics(
+                area = 0.0,
+                crestY = crestY,
+                groundY = sliceGround,
+                isUseful = false
+            )
+        }
+
+        val pileCandidatePoints = pointsInSlice.filter { it.source.y >= pileBase + 0.05f }
+        if (pileCandidatePoints.size < 12) {
+            return SliceMetrics(
+                area = 0.0,
+                crestY = crestY,
+                groundY = sliceGround,
+                isUseful = false
+            )
+        }
+
+        val pileYs = pileCandidatePoints.map { it.source.y }.sorted()
+        val refinedCrestY = percentile(pileYs, 0.94f)
+
+        val crossValues = pileCandidatePoints.map { it.cross }.sorted()
+        val crossMin = percentile(crossValues, 0.08f)
+        val crossMax = percentile(crossValues, 0.92f)
+        val effectiveWidth = (crossMax - crossMin).toDouble().coerceAtLeast(0.0)
+
+        if (effectiveWidth <= 0.05) {
+            return SliceMetrics(
+                area = 0.0,
+                crestY = refinedCrestY,
+                groundY = sliceGround,
+                isUseful = false
+            )
+        }
+
+        val area = integrateSliceArea(
+            pointsInSlice = pileCandidatePoints,
+            crossMin = crossMin,
+            crossMax = crossMax,
+            fallbackGround = sliceGround,
+            fallbackCrest = refinedCrestY
+        )
+
+        return SliceMetrics(
+            area = area,
+            crestY = refinedCrestY,
+            groundY = sliceGround,
+            isUseful = area > 0.0
+        )
+    }
+
     private fun integrateSliceArea(
         pointsInSlice: List<ProjectedPoint>,
         crossMin: Float,
         crossMax: Float,
-        fallbackHeight: Double
+        fallbackGround: Float,
+        fallbackCrest: Float
     ): Double {
         val width = (crossMax - crossMin).toDouble()
         if (width <= 0.0) return 0.0
 
-        val estimatedBins = ceil(width / 0.25).toInt()
-        val bins = estimatedBins.coerceIn(4, 10)
+        val estimatedBins = ceil(width / 0.22).toInt()
+        val bins = estimatedBins.coerceIn(5, 12)
         val binWidth = width / bins
 
         var totalArea = 0.0
@@ -129,8 +176,8 @@ class VolumeCalculator(
             if (binPoints.size < 4) continue
 
             val ys = binPoints.map { it.source.y }.sorted()
-            val ground = percentile(ys, 0.15f)
-            val top = percentile(ys, 0.85f)
+            val ground = min(fallbackGround, percentile(ys, 0.12f))
+            val top = percentile(ys, 0.90f)
             val binHeight = (top - ground).toDouble()
 
             if (binHeight > params.groundMargin) {
@@ -140,26 +187,25 @@ class VolumeCalculator(
         }
 
         if (contributingBins == 0) {
-            return fallbackHeight * width * 0.65
+            val fallbackHeight = (fallbackCrest - fallbackGround).toDouble().coerceAtLeast(0.0)
+            return fallbackHeight * width * 0.55
         }
 
         return totalArea
     }
 
     private fun smoothTopPoints(points: List<Position>): List<Position> {
-        if (points.size < 7) return points
+        if (points.size < 5) return points
 
         return points.mapIndexed { index, point ->
-            if (index in 3 until points.lastIndex - 2) {
+            if (index in 2 until points.lastIndex - 1) {
                 val avgY = (
-                        points[index - 3].y +
-                                points[index - 2].y +
+                        points[index - 2].y +
                                 points[index - 1].y +
                                 points[index].y +
                                 points[index + 1].y +
-                                points[index + 2].y +
-                                points[index + 3].y
-                        ) / 7f
+                                points[index + 2].y
+                        ) / 5f
 
                 Position(point.x, avgY, point.z)
             } else {

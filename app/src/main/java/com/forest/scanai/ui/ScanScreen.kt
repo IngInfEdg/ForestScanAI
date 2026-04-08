@@ -154,34 +154,68 @@ fun ScanScreen(
                 }
             }
 
-            Button(
-                onClick = { viewModel.toggleMeasuring() },
-                enabled = uiState.isMeasuring || uiState.canFinishMeasurement,
-                modifier = Modifier
-                    .fillMaxWidth(0.7f)
-                    .height(56.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (uiState.isMeasuring) Color.Red else Color(0xFF4CAF50)
-                )
-            ) {
-                Text(if (uiState.isMeasuring) "Detener escaneo" else "Finalizar")
-            }
+            if (!uiState.isMeasuring) {
+                Button(
+                    onClick = { viewModel.toggleMeasuring() },
+                    modifier = Modifier
+                        .fillMaxWidth(0.7f)
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1976D2)
+                    )
+                ) {
+                    Text("Iniciar medición")
+                }
 
-            Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Button(
+                        onClick = { viewModel.reset() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
+                    ) {
+                        Text("Reset")
+                    }
+
+                    Button(
+                        onClick = { onSaveReport(uiState) },
+                        enabled = uiState.stereoVolume > 0,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF388E3C))
+                    ) {
+                        Text("Guardar CSV")
+                    }
+                }
+            } else {
+                Button(
+                    onClick = { viewModel.toggleMeasuring() },
+                    enabled = true,
+                    modifier = Modifier
+                        .fillMaxWidth(0.7f)
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (uiState.canFinishMeasurement) {
+                            Color(0xFF2E7D32)
+                        } else {
+                            Color.Red
+                        }
+                    )
+                ) {
+                    Text(
+                        if (uiState.canFinishMeasurement) {
+                            "Finalizar medición"
+                        } else {
+                            "Detener escaneo"
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
                 Button(
                     onClick = { viewModel.reset() },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
                 ) {
-                    Text("Reset")
-                }
-
-                Button(
-                    onClick = { if (!uiState.isMeasuring) onSaveReport(uiState) },
-                    enabled = !uiState.isMeasuring && uiState.stereoVolume > 0
-                ) {
-                    Text("Guardar CSV")
+                    Text("Cancelar")
                 }
             }
         }
