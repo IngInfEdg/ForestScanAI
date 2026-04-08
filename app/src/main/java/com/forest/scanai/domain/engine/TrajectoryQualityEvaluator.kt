@@ -65,11 +65,11 @@ class TrajectoryQualityEvaluator(
             ).coerceIn(0f, 1f)
 
         val penalties = mutableSetOf<TrajectoryPenalty>()
-        if (loopClosure.normalizedError > 0.25) penalties.add(TrajectoryPenalty.HIGH_LOOP_CLOSURE_ERROR)
-        if (angular.coverageRatio < 0.60f || angular.normalizedEntropy < 0.65f) {
+        if (loopClosure.normalizedError > 0.10) penalties.add(TrajectoryPenalty.HIGH_LOOP_CLOSURE_ERROR)
+        if (angular.coverageRatio < 0.75f || angular.normalizedEntropy < 0.65f) {
             penalties.add(TrajectoryPenalty.POOR_ANGULAR_UNIFORMITY)
         }
-        if (kinematic.coefficientOfVariation > 1.0 || kinematic.jumpRatio > 3.0) {
+        if (kinematic.coefficientOfVariation > 1.0 || kinematic.jumpRatio > 2.0) {
             penalties.add(TrajectoryPenalty.LOW_KINEMATIC_CONSISTENCY)
         }
 
@@ -106,8 +106,12 @@ class TrajectoryQualityEvaluator(
     }
 
     private fun analyzeAngularUniformity(samples: List<TrajectorySample>): AngularUniformityAnalysis {
-        val centerX = samples.map { it.x }.average()
-        val centerZ = samples.map { it.z }.average()
+        val minX = samples.minOf { it.x }
+        val maxX = samples.maxOf { it.x }
+        val minZ = samples.minOf { it.z }
+        val maxZ = samples.maxOf { it.z }
+        val centerX = (minX + maxX) / 2.0
+        val centerZ = (minZ + maxZ) / 2.0
 
         val sectorCounts = IntArray(totalSectors)
         val sectorSize = (2.0 * PI) / totalSectors
