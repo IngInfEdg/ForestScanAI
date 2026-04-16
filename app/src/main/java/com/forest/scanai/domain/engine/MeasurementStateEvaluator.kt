@@ -6,7 +6,8 @@ class MeasurementStateEvaluator(
     private val completeTrajectoryThreshold: Float = 0.75f,
     private val acceptableTrajectoryThreshold: Float = 0.60f,
     private val completeVerticalThreshold: Float = 0.75f,
-    private val acceptableVerticalThreshold: Float = 0.60f
+    private val acceptableVerticalThreshold: Float = 0.60f,
+    private val completeTopCoverageThreshold: Float = 0.62f
 ) {
 
     fun evaluate(input: MeasurementStateInput): MeasurementStateDecision {
@@ -20,6 +21,10 @@ class MeasurementStateEvaluator(
 
         if (input.verticalCoverageScore < acceptableVerticalThreshold || input.weakVerticalBands >= 2) {
             blockers += "La cobertura vertical aún es insuficiente; falta capturar base y corona con más detalle."
+            level = level.capAt(CompletenessLevel.PARTIAL)
+        }
+        if (input.topCoverageScore < 0.52f) {
+            blockers += "Aún faltan puntos de corona; inclina el celular hacia la cima y mantén la parte alta al centro."
             level = level.capAt(CompletenessLevel.PARTIAL)
         }
 
@@ -38,6 +43,10 @@ class MeasurementStateEvaluator(
                 blockers += "Cobertura vertical insuficiente para completar (base, mitad y corona)."
                 level = level.capAt(CompletenessLevel.ACCEPTABLE)
             }
+            if (input.topCoverageScore < completeTopCoverageThreshold) {
+                blockers += "La corona aún no está bien muestreada para marcar medición completa."
+                level = level.capAt(CompletenessLevel.ACCEPTABLE)
+            }
 
             if (!input.isVolumeStable) {
                 blockers += "El volumen aún no se estabiliza; continúa escaneando para mejorar precisión."
@@ -50,6 +59,17 @@ class MeasurementStateEvaluator(
         }
 
         val canFinish = level == CompletenessLevel.ACCEPTABLE || level == CompletenessLevel.COMPLETE
+        val autoCompletionCandidate =
+            input.coverageRatio >= 0.95f &&
+                input.coveredSectors >= 11 &&
+                input.verticalCoverageScore >= 0.72f &&
+                input.topCoverageScore >= 0.62f &&
+                input.trajectoryQualityScore >= 0.72f &&
+                input.isVolumeStable &&
+                input.recentUsefulPointGrowthRatio <= 0.035f &&
+                input.recentVolumeDeltaRatio <= 0.03f &&
+                input.hasUsableDetection
+
         val hasCoverageForReview = input.coverageRatio >= 0.85f || input.coveredSectors >= 10
         val hasSamplingForReview = input.observerSamples >= 18 && input.usefulPointCount >= 600
         val hasModelForReview = input.hasReviewableModel || input.usefulPointCount >= 900
@@ -61,8 +81,10 @@ class MeasurementStateEvaluator(
             )
 
         val shortGuidance = when {
+            autoCompletionCandidate -> "Medición completa detectada. Ya puedes finalizar."
             input.missingLowerBand -> "Falta capturar mejor la base."
-            input.missingUpperBand -> "Falta capturar mejor la parte superior."
+            input.missingUpperBand -> "Inclina el celular hacia la cima de la pila."
+            input.topCoverageScore < 0.55f -> "Da un paso atrás para capturar la corona completa."
             input.hasTrajectoryInstability -> "Recorrido con saltos; mueve el celular más parejo."
             canFinish -> "Medición completa. Ya puedes finalizar."
             canReview -> "Medición lista para revisión."
@@ -74,6 +96,7 @@ class MeasurementStateEvaluator(
             completeness = level,
             canReview = canReview,
             canFinish = canFinish,
+            autoCompletionCandidate = autoCompletionCandidate,
             shortGuidance = shortGuidance,
             blockers = blockers.distinct()
         )
@@ -99,6 +122,9 @@ data class MeasurementStateInput(
     val supportsAcceptableVertical: Boolean,
     val hasStrongMiddleConcentration: Boolean,
     val isVolumeStable: Boolean,
+    val topCoverageScore: Float,
+    val recentUsefulPointGrowthRatio: Float,
+    val recentVolumeDeltaRatio: Float,
     val hasUsableDetection: Boolean,
     val hasReviewableModel: Boolean
 )
@@ -107,6 +133,7 @@ data class MeasurementStateDecision(
     val completeness: CompletenessLevel,
     val canReview: Boolean,
     val canFinish: Boolean,
+    val autoCompletionCandidate: Boolean,
     val shortGuidance: String,
     val blockers: List<String>
 )

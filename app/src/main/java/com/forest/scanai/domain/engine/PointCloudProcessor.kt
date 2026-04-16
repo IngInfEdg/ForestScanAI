@@ -71,7 +71,13 @@ class PointCloudProcessor(private val params: ScanParams) {
                     continue
                 }
 
-                if (confidence < (params.confidenceThreshold * 0.85f)) {
+                val adaptiveConfidenceThreshold = when {
+                    y - cameraPos.y > 1.6f -> (params.confidenceThreshold * 0.72f)
+                    y - cameraPos.y > 0.9f -> (params.confidenceThreshold * 0.80f)
+                    else -> (params.confidenceThreshold * 0.85f)
+                }
+
+                if (confidence < adaptiveConfidenceThreshold) {
                     rejectedConfidence++
                     continue
                 }
@@ -101,7 +107,7 @@ class PointCloudProcessor(private val params: ScanParams) {
                     continue
                 }
 
-                if (horizontalDistance > 5.0f && confidence < 0.45f) {
+                if (horizontalDistance > 5.0f && confidence < 0.45f && verticalDelta < 1.8f) {
                     rejectedNoise++
                     continue
                 }

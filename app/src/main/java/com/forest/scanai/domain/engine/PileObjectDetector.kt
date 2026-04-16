@@ -176,8 +176,13 @@ class PileObjectDetector(
             else -> PileDetectionQuality.FALLBACK
         }
 
-        val pilePoints = selected?.points ?: nonGround.ifEmpty { points }
-        val bounds = selected?.boundingInfo ?: buildBounds(pilePoints)
+        val initialPilePoints = selected?.points ?: nonGround.ifEmpty { points }
+        val pilePoints = preserveTopCrownPoints(
+            selectedCluster = selected,
+            nonGroundPoints = nonGround,
+            fallbackPoints = initialPilePoints
+        )
+        val bounds = buildBounds(pilePoints)
 
         if (quality == PileDetectionQuality.FALLBACK) {
             reasons += "Se aplicará fallback a puntos crudos para no cortar el flujo de medición."
@@ -195,7 +200,8 @@ class PileObjectDetector(
             "bounding_box" to formatBounds(bounds),
             "confidence" to String.format("%.3f", confidence),
             "ground_plane_fit_error" to String.format("%.4f", plane.fitError),
-            "ground_method" to plane.method
+            "ground_method" to plane.method,
+            "top_band_points" to countTopBandPoints(pilePoints).toString()
         )
 
         return PileDetectionResult(
@@ -286,6 +292,31 @@ class PileObjectDetector(
             .coerceIn(0f, 1f)
 
         return (sizeScore * 0.50f + centerScore * 0.25f + geometryScore * 0.25f).coerceIn(0f, 1f)
+    }
+
+    private fun preserveTopCrownPoints(
+        selectedCluster: PileCluster?,
+        nonGroundPoints: List<Position>,
+        fallbackPoints: List<Position>
+    ): List<Position> {
+        val bounds = selectedCluster?.boundingInfo ?: return fallbackPoints
+        val base = selectedCluster.points.toMutableList()
+        val topThreshold = bounds.maxY - bounds.height * 0.18f
+        val extraTopPoints = nonGroundPoints.filter { point ->
+            point.y >= topThreshold &&
+                point.x in (bounds.minX - 0.35f)..(bounds.maxX + 0.35f) &&
+                point.z in (bounds.minZ - 0.35f)..(bounds.maxZ + 0.35f)
+        }
+        base += extraTopPoints
+        return base.distinct()
+    }
+
+    private fun countTopBandPoints(points: List<Position>): Int {
+        if (points.isEmpty()) return 0
+        val minY = points.minOf { it.y }
+        val maxY = points.maxOf { it.y }
+        val threshold = maxY - (maxY - minY).coerceAtLeast(1e-4f) * 0.20f
+        return points.count { it.y >= threshold }
     }
 
     private fun dbscan(points: List<Position>): List<List<Position>> {

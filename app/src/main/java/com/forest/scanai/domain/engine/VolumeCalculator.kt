@@ -6,6 +6,7 @@ import io.github.sceneview.math.Position
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.abs
 
 class VolumeCalculator(
     private val params: ScanParams,
@@ -64,11 +65,12 @@ class VolumeCalculator(
             topPoints.add(axisEstimator.pointOnAxis(axis, centerAlong, topY))
         }
 
+        val stabilizedSliceAreas = smoothSliceAreas(sliceAreas)
         val smoothedTopPoints = smoothTopPoints(topPoints)
 
         var rawVolume = 0.0
-        for (i in 0 until sliceAreas.size - 1) {
-            rawVolume += ((sliceAreas[i] + sliceAreas[i + 1]) / 2.0) * sliceWidth
+        for (i in 0 until stabilizedSliceAreas.size - 1) {
+            rawVolume += ((stabilizedSliceAreas[i] + stabilizedSliceAreas[i + 1]) / 2.0) * sliceWidth
         }
 
         val usefulSliceRatio = usefulSlices / numSlices.toDouble()
@@ -80,10 +82,11 @@ class VolumeCalculator(
         }
         val correctedVolume = rawVolume * edgeRecoveryFactor
 
+        val alpha = if (abs(correctedVolume - lastCalculatedVolume) < correctedVolume * 0.08) 0.07 else 0.04
         val finalVolume = if (lastCalculatedVolume == 0.0) {
             correctedVolume
         } else {
-            lastCalculatedVolume + 0.05 * (correctedVolume - lastCalculatedVolume)
+            lastCalculatedVolume + alpha * (correctedVolume - lastCalculatedVolume)
         }
 
         lastCalculatedVolume = finalVolume
@@ -98,7 +101,8 @@ class VolumeCalculator(
                 "volume_slices_total" to numSlices.toString(),
                 "volume_slices_useful" to usefulSlices.toString(),
                 "volume_slice_ratio" to String.format("%.3f", usefulSliceRatio),
-                "volume_edge_recovery_factor" to String.format("%.3f", edgeRecoveryFactor)
+                "volume_edge_recovery_factor" to String.format("%.3f", edgeRecoveryFactor),
+                "volume_temporal_alpha" to String.format("%.3f", alpha)
             )
         )
     }
@@ -114,9 +118,9 @@ class VolumeCalculator(
         }
 
         val ys = pointsInSlice.map { it.source.y }.sorted()
-        val sliceGround = percentile(ys, 0.10f)
-        val pileBase = percentile(ys, 0.18f)
-        val crestY = percentile(ys, 0.96f)
+        val sliceGround = percentile(ys, 0.12f)
+        val pileBase = percentile(ys, 0.24f)
+        val crestY = percentile(ys, 0.94f)
 
         val rawHeight = (crestY - sliceGround).toDouble()
         if (rawHeight <= params.groundMargin) {
@@ -139,11 +143,11 @@ class VolumeCalculator(
         }
 
         val pileYs = pileCandidatePoints.map { it.source.y }.sorted()
-        val refinedCrestY = percentile(pileYs, 0.97f)
+        val refinedCrestY = percentile(pileYs, 0.95f)
 
         val crossValues = pileCandidatePoints.map { it.cross }.sorted()
-        val crossMin = percentile(crossValues, 0.04f)
-        val crossMax = percentile(crossValues, 0.96f)
+        val crossMin = percentile(crossValues, 0.07f)
+        val crossMax = percentile(crossValues, 0.93f)
         val effectiveWidth = (crossMax - crossMin).toDouble().coerceAtLeast(0.0)
 
         if (effectiveWidth <= 0.05) {
@@ -197,7 +201,7 @@ class VolumeCalculator(
 
             val ys = binPoints.map { it.source.y }.sorted()
             val ground = min(fallbackGround, percentile(ys, 0.12f))
-            val top = percentile(ys, 0.93f)
+            val top = percentile(ys, 0.91f)
             val binHeight = (top - ground).toDouble()
 
             if (binHeight > params.groundMargin) {
@@ -212,6 +216,18 @@ class VolumeCalculator(
         }
 
         return totalArea
+    }
+
+    private fun smoothSliceAreas(sliceAreas: List<Double>): List<Double> {
+        if (sliceAreas.size < 5) return sliceAreas
+        return sliceAreas.mapIndexed { index, value ->
+            if (index in 1 until sliceAreas.lastIndex) {
+                val window = listOf(sliceAreas[index - 1], value, sliceAreas[index + 1]).sorted()
+                window[1]
+            } else {
+                value
+            }
+        }
     }
 
     private fun smoothTopPoints(points: List<Position>): List<Position> {
