@@ -143,7 +143,7 @@ private fun completenessText(level: CompletenessLevel): String {
     return when (level) {
         CompletenessLevel.INSUFFICIENT -> "Insuficiente"
         CompletenessLevel.PARTIAL -> "Parcial"
-        CompletenessLevel.ACCEPTABLE -> "Aceptable"
+        CompletenessLevel.ACCEPTABLE -> "Revisable"
         CompletenessLevel.COMPLETE -> "Completa"
     }
 }

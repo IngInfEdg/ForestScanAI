@@ -29,6 +29,9 @@ class MeasurementStateEvaluatorTest {
                 supportsAcceptableVertical = false,
                 hasStrongMiddleConcentration = true,
                 isVolumeStable = true,
+                topCoverageScore = 0.40f,
+                recentUsefulPointGrowthRatio = 0.12f,
+                recentVolumeDeltaRatio = 0.09f,
                 hasUsableDetection = true,
                 hasReviewableModel = true
             )
@@ -62,6 +65,9 @@ class MeasurementStateEvaluatorTest {
                 supportsAcceptableVertical = true,
                 hasStrongMiddleConcentration = false,
                 isVolumeStable = stability.isStable,
+                topCoverageScore = 0.78f,
+                recentUsefulPointGrowthRatio = 0.05f,
+                recentVolumeDeltaRatio = 0.06f,
                 hasUsableDetection = true,
                 hasReviewableModel = true
             )
@@ -69,5 +75,34 @@ class MeasurementStateEvaluatorTest {
 
         assertEquals("Volumen inestable no permite COMPLETE", CompletenessLevel.ACCEPTABLE, decision.completeness)
         assertTrue("Debe incluir mensaje de bloqueo", decision.blockers.any { it.contains("volumen", ignoreCase = true) })
+    }
+
+    @Test
+    fun stableAndFullyCoveredMeasurement_shouldEnableAutoCompletionCandidate() {
+        val decision = evaluator.evaluate(
+            MeasurementStateInput(
+                baseCompleteness = CompletenessLevel.COMPLETE,
+                coverageRatio = 0.97f,
+                coveredSectors = 12,
+                observerSamples = 52,
+                usefulPointCount = 2800,
+                trajectoryQualityScore = 0.88f,
+                hasTrajectoryInstability = false,
+                verticalCoverageScore = 0.84f,
+                weakVerticalBands = 0,
+                missingLowerBand = false,
+                missingUpperBand = false,
+                supportsAcceptableVertical = true,
+                hasStrongMiddleConcentration = false,
+                isVolumeStable = true,
+                topCoverageScore = 0.81f,
+                recentUsefulPointGrowthRatio = 0.02f,
+                recentVolumeDeltaRatio = 0.015f,
+                hasUsableDetection = true,
+                hasReviewableModel = true
+            )
+        )
+
+        assertTrue("Debe sugerir finalización automática cuando ya no hay mejoras relevantes", decision.autoCompletionCandidate)
     }
 }

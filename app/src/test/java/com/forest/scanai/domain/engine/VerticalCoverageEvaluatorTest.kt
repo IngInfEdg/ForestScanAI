@@ -16,6 +16,7 @@ class VerticalCoverageEvaluatorTest {
         val result = evaluator.evaluate(points)
 
         assertTrue("Score vertical alto esperado para nube balanceada", result.verticalCoverageScore >= 0.75f)
+        assertTrue("Top coverage debería ser alto en nube balanceada", result.topCoverageScore >= 0.60f)
         assertTrue("Debe cubrir 3 bandas", result.coveredBands.size == 3)
         assertFalse("No debería penalizar dominancia media", VerticalCoveragePenalty.MIDDLE_DOMINANCE in result.penaltyFlags)
     }
@@ -38,6 +39,19 @@ class VerticalCoverageEvaluatorTest {
 
         assertTrue("Debe reportar banda superior faltante", VerticalCoveragePenalty.MISSING_UPPER_BAND in result.penaltyFlags)
         assertFalse("Sin banda superior no puede soportar COMPLETE", result.supportsComplete)
+    }
+
+    @Test
+    fun sparseTopBand_shouldTriggerTopSurfaceSparsePenalty() {
+        val points = buildBandPoints(lower = 140, middle = 140, upper = 20)
+
+        val result = evaluator.evaluate(points)
+
+        assertTrue(
+            "Top muy disperso debe penalizarse",
+            VerticalCoveragePenalty.TOP_SURFACE_SPARSE in result.penaltyFlags
+        )
+        assertTrue("Top coverage score debe reflejar falta de densidad", result.topCoverageScore < 0.55f)
     }
 
     private fun buildBandPoints(lower: Int, middle: Int, upper: Int): List<Position> {

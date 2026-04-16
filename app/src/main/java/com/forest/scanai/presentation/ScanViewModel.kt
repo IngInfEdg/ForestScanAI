@@ -75,6 +75,7 @@ class ScanViewModel(
     private val trajectory = mutableStateListOf<Location>()
     private val observerPath = mutableStateListOf<Position>()
     private val volumeHistory = ArrayDeque<Double>()
+    private val usefulPointHistory = ArrayDeque<Int>()
 
     private var startPos: Position? = null
     private var gpsJob: Job? = null
@@ -180,6 +181,9 @@ class ScanViewModel(
                 supportsAcceptableVertical = verticalCoverage.supportsAcceptable,
                 hasStrongMiddleConcentration = verticalCoverage.hasStrongMiddleConcentration,
                 isVolumeStable = volumeStability.isStable,
+                topCoverageScore = verticalCoverage.topCoverageScore,
+                recentUsefulPointGrowthRatio = computeRecentUsefulPointGrowthRatio(),
+                recentVolumeDeltaRatio = computeRecentVolumeDeltaRatio(),
                 hasUsableDetection = detection.isRobust || detection.pilePoints.size >= 120,
                 hasReviewableModel = refinedPilePoints.size >= 600
             )
@@ -189,7 +193,10 @@ class ScanViewModel(
             completeness = stateDecision.completeness,
             missingSectors = coverageResult.missingSectors,
             observerSamples = observerPath.size,
-            usefulPoints = refinedPilePoints.size
+            usefulPoints = refinedPilePoints.size,
+            missingUpperBand = VerticalCoveragePenalty.MISSING_UPPER_BAND in verticalCoverage.penaltyFlags,
+            lowTopCoverage = verticalCoverage.topCoverageScore < 0.55f,
+            autoCompletionCandidate = stateDecision.autoCompletionCandidate
         )
 
         val gatedGuidance = buildString {
@@ -209,7 +216,11 @@ class ScanViewModel(
             gpsDistance = gpsDistance,
             arDistance = arDistance,
             verticalCoverage = verticalCoverage.verticalCoverageScore,
+            topCoverage = verticalCoverage.topCoverageScore,
             volumeStable = volumeStability.isStable,
+            autoCompletionCandidate = stateDecision.autoCompletionCandidate,
+            usefulPointGrowthRatio = computeRecentUsefulPointGrowthRatio(),
+            volumeDeltaRatio = computeRecentVolumeDeltaRatio(),
             blockers = stateDecision.blockers,
             detection = detection
         )
@@ -311,7 +322,10 @@ class ScanViewModel(
             "volume_after_correction" to String.format("%.3f", result.volumeAfterCorrection),
             "detection_confidence" to String.format("%.3f", detection.detectionConfidence),
             "vertical_coverage_score" to String.format("%.3f", verticalCoverage.verticalCoverageScore),
-            "trajectory_quality_score" to String.format("%.3f", trajectoryQuality.trajectoryQualityScore)
+            "top_coverage_score" to String.format("%.3f", verticalCoverage.topCoverageScore),
+            "trajectory_quality_score" to String.format("%.3f", trajectoryQuality.trajectoryQualityScore),
+            "volume_stability_score" to String.format("%.3f", 1.0 - volumeStability.relativeVariation.coerceIn(0.0, 1.0)),
+            "auto_completion_candidate" to stateDecision.autoCompletionCandidate.toString()
         ) + result.debugInfo
 
         _finalResult.value = ScanSessionResult(
@@ -428,6 +442,8 @@ class ScanViewModel(
 
         volumeHistory.addLast(calcResult.volume)
         if (volumeHistory.size > 20) volumeHistory.removeFirst()
+        usefulPointHistory.addLast(measurementPoints.size)
+        if (usefulPointHistory.size > 20) usefulPointHistory.removeFirst()
 
         refreshMeasurementState()
     }
@@ -486,6 +502,9 @@ class ScanViewModel(
                 supportsAcceptableVertical = verticalCoverage.supportsAcceptable,
                 hasStrongMiddleConcentration = verticalCoverage.hasStrongMiddleConcentration,
                 isVolumeStable = volumeStability.isStable,
+                topCoverageScore = verticalCoverage.topCoverageScore,
+                recentUsefulPointGrowthRatio = computeRecentUsefulPointGrowthRatio(),
+                recentVolumeDeltaRatio = computeRecentVolumeDeltaRatio(),
                 hasUsableDetection = detection.isRobust || detection.pilePoints.size >= 120,
                 hasReviewableModel = evaluationPoints.size >= 600
             )
@@ -506,7 +525,10 @@ class ScanViewModel(
             completeness = adjustedCompleteness,
             missingSectors = coverageResult.missingSectors,
             observerSamples = observerPath.size,
-            usefulPoints = evaluationPoints.size
+            usefulPoints = evaluationPoints.size,
+            missingUpperBand = VerticalCoveragePenalty.MISSING_UPPER_BAND in verticalCoverage.penaltyFlags,
+            lowTopCoverage = verticalCoverage.topCoverageScore < 0.55f,
+            autoCompletionCandidate = stateDecision.autoCompletionCandidate
         )
 
         val adjustedGuidance = buildString {
@@ -525,7 +547,11 @@ class ScanViewModel(
             gpsDistance = gpsDistance,
             arDistance = arDistance,
             verticalCoverage = verticalCoverage.verticalCoverageScore,
+            topCoverage = verticalCoverage.topCoverageScore,
             volumeStable = volumeStability.isStable,
+            autoCompletionCandidate = stateDecision.autoCompletionCandidate,
+            usefulPointGrowthRatio = computeRecentUsefulPointGrowthRatio(),
+            volumeDeltaRatio = computeRecentVolumeDeltaRatio(),
             blockers = stateDecision.blockers,
             detection = detection
         )
@@ -548,7 +574,7 @@ class ScanViewModel(
                 shortGuidanceMessage = stateDecision.shortGuidance,
                 diagnostics = diagnostics,
                 canReviewMeasurement = stateDecision.canReview,
-                canFinishMeasurement = stateDecision.canFinish &&
+                canFinishMeasurement = (stateDecision.canFinish || stateDecision.autoCompletionCandidate) &&
                     (adjustedCompleteness == CompletenessLevel.ACCEPTABLE || adjustedCompleteness == CompletenessLevel.COMPLETE)
             )
         }
@@ -562,7 +588,11 @@ class ScanViewModel(
         gpsDistance: Double,
         arDistance: Double,
         verticalCoverage: Float,
+        topCoverage: Float,
         volumeStable: Boolean,
+        autoCompletionCandidate: Boolean,
+        usefulPointGrowthRatio: Float,
+        volumeDeltaRatio: Float,
         blockers: List<String>,
         detection: com.forest.scanai.domain.engine.PileDetectionResult
     ): List<String> {
@@ -572,12 +602,35 @@ class ScanViewModel(
             "Distancia GPS: ${"%.1f".format(gpsDistance)} m",
             "Quality score trayectoria: ${"%.2f".format(trajectoryQuality)}",
             "Cobertura vertical: ${(verticalCoverage * 100).toInt()}%",
+            "Cobertura de cima/corona: ${(topCoverage * 100).toInt()}%",
             "Cobertura total: ${(coverageResult * 100).toInt()}%",
             "Volumen estable: ${if (volumeStable) "Sí" else "No"}",
+            "Crecimiento puntos útiles (reciente): ${"%.2f".format(usefulPointGrowthRatio * 100f)}%",
+            "Delta volumen (reciente): ${"%.2f".format(volumeDeltaRatio * 100f)}%",
+            "Auto-finalización: ${if (autoCompletionCandidate) "Lista" else "Aún no"}",
             "Detection confidence: ${(detection.detectionConfidence * 100).toInt()}%",
             "Detector: ${detection.quality.name}"
         )
         return (header + blockers + detection.reasons).distinct()
+    }
+
+    private fun computeRecentUsefulPointGrowthRatio(window: Int = 6): Float {
+        val recent = usefulPointHistory.takeLast(window)
+        if (recent.size < 2) return 1f
+        val first = recent.first().coerceAtLeast(1)
+        val last = recent.last()
+        return ((last - first).toFloat() / first.toFloat()).coerceAtLeast(0f)
+    }
+
+    private fun computeRecentVolumeDeltaRatio(window: Int = 6): Float {
+        val recent = volumeHistory.takeLast(window)
+        if (recent.size < 2) return 1f
+        val median = recent.sorted().let { sorted ->
+            if (sorted.size % 2 == 0) (sorted[sorted.size / 2] + sorted[sorted.size / 2 - 1]) / 2.0
+            else sorted[sorted.size / 2]
+        }.coerceAtLeast(1e-6)
+        val delta = ((recent.maxOrNull() ?: median) - (recent.minOrNull() ?: median)).coerceAtLeast(0.0)
+        return (delta / median).toFloat().coerceAtLeast(0f)
     }
 
     private fun calculateGpsDistance(): Double {
@@ -631,6 +684,7 @@ class ScanViewModel(
         trajectory.clear()
         observerPath.clear()
         volumeHistory.clear()
+        usefulPointHistory.clear()
         startPos = null
         gpsJob?.cancel()
         _uiState.value = ScanUiState(appVersionDisplay = appVersionDisplay)
