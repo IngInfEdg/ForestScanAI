@@ -32,8 +32,12 @@ data class ScanUiState(
 data class ScanResult(
     val volume: Double,
     val topPoints: List<Position>,
-    val volumeBeforeCorrection: Double = 0.0,
-    val volumeAfterCorrection: Double = volume,
+    val geometricVolumeRaw: Double = 0.0,
+    val geometricVolumeCorrected: Double = volume,
+    val stereoVolumeSmoothed: Double = volume,
+    val netVolumeEstimate: Double = volume * 0.45,
+    val volumeBeforeCorrection: Double = geometricVolumeRaw,
+    val volumeAfterCorrection: Double = geometricVolumeCorrected,
     val debugInfo: Map<String, String> = emptyMap()
 )
 
