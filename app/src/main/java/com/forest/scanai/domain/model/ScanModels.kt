@@ -36,10 +36,12 @@ data class ScanResult(
     val geometricVolumeCorrected: Double = volume,
     val stereoVolumeSmoothed: Double = volume,
     val netVolumeEstimate: Double = volume * 0.45,
-    val volumeBeforeCorrection: Double = geometricVolumeRaw,
-    val volumeAfterCorrection: Double = geometricVolumeCorrected,
     val debugInfo: Map<String, String> = emptyMap()
-)
+) {
+    // Backward compatibility for callers still using previous naming.
+    val volumeBeforeCorrection: Double get() = geometricVolumeRaw
+    val volumeAfterCorrection: Double get() = geometricVolumeCorrected
+}
 
 enum class CompletenessLevel {
     INSUFFICIENT, PARTIAL, ACCEPTABLE, COMPLETE

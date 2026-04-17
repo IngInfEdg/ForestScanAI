@@ -54,10 +54,6 @@ data class ScanSessionResult(
     val stereoVolumeSmoothed: Double = 0.0,
     val netVolumeEstimate: Double = 0.0,
 
-    // Backward-compatible aliases used by legacy consumers.
-    val volumeBeforeCorrection: Double = geometricVolumeRaw,
-    val volumeAfterCorrection: Double = geometricVolumeCorrected,
-
     val referenceBarMeasurement: ReferenceBarMeasurement? = null,
     val scaleValidationScore: Float = 0f,
     val volumeStabilityScore: Float = 0f,
@@ -67,4 +63,11 @@ data class ScanSessionResult(
     val appVersionDisplay: String = "",
 
     val timestamp: Long = System.currentTimeMillis()
-)
+) {
+    // Backward compatibility for existing callers/exports.
+    val volumeBeforeCorrection: Double
+        get() = geometricVolumeRaw
+
+    val volumeAfterCorrection: Double
+        get() = geometricVolumeCorrected
+}
