@@ -68,4 +68,11 @@ data class ScanSessionResult(
     val appVersionDisplay: String = "",
 
     val timestamp: Long = System.currentTimeMillis()
-)
+) {
+    // Backward compatibility for existing callers/exports.
+    val volumeBeforeCorrection: Double
+        get() = geometricVolumeRaw
+
+    val volumeAfterCorrection: Double
+        get() = geometricVolumeCorrected
+}
