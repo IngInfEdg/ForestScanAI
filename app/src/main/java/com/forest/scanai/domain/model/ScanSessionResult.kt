@@ -31,17 +31,14 @@ data class ScanSessionResult(
 
     val guidanceSummary: String,
 
-    // 🔹 NUEVO — separación suelo vs pila
     val groundPoints: List<Position> = emptyList(),
     val pileOnlyPoints: List<Position> = emptyList(),
 
-    // 🔹 NUEVO — alturas reales
     val groundReference: Double = 0.0,
     val pileBaseReference: Double = 0.0,
     val meanPileHeight: Double = 0.0,
     val p95PileHeight: Double = 0.0,
 
-    // 🔹 NUEVO — modelo 3D listo para visualización
     val reviewModelPoints: List<ReviewPoint3D> = emptyList(),
     val reviewModelWidth: Float = 0f,
     val reviewModelHeight: Float = 0f,
@@ -51,17 +48,15 @@ data class ScanSessionResult(
     val pileDetectionQuality: String = "FALLBACK",
     val pileDetectionReasons: List<String> = emptyList(),
     val detectionDebugInfo: Map<String, String> = emptyMap(),
+
     val geometricVolumeRaw: Double = 0.0,
     val geometricVolumeCorrected: Double = 0.0,
     val stereoVolumeSmoothed: Double = 0.0,
     val netVolumeEstimate: Double = 0.0,
+
     val referenceBarMeasurement: ReferenceBarMeasurement? = null,
     val scaleValidationScore: Float = 0f,
     val volumeStabilityScore: Float = 0f,
-
-    // Backward compatibility for existing callers/exports.
-    val volumeBeforeCorrection: Double get() = geometricVolumeRaw
-    val volumeAfterCorrection: Double get() = geometricVolumeCorrected
 
     val appVersionName: String = "",
     val appVersionCode: Long = 0,
