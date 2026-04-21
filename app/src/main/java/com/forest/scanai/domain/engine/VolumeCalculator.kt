@@ -48,6 +48,13 @@ class VolumeCalculator(
         val sliceWidth = params.sliceWidth.toFloat().coerceAtLeast(0.12f)
         val totalLength = (axis.maxAlong - axis.minAlong).coerceAtLeast(0.01f)
         val numSlices = max(1, ceil(totalLength / sliceWidth).toInt())
+        val sliceBuckets = MutableList(numSlices) { mutableListOf<ProjectedPoint>() }
+
+        projectedPoints.forEach { projected ->
+            val normalized = ((projected.along - axis.minAlong) / totalLength).coerceIn(0f, 0.9999f)
+            val sliceIndex = (normalized * numSlices).toInt().coerceIn(0, numSlices - 1)
+            sliceBuckets[sliceIndex].add(projected)
+        }
 
         val sliceAreas = MutableList(numSlices) { 0.0 }
         val topPoints = mutableListOf<Position>()
@@ -58,7 +65,7 @@ class VolumeCalculator(
             val endAlong = min(axis.maxAlong, startAlong + sliceWidth)
             val centerAlong = (startAlong + endAlong) / 2f
 
-            val pointsInSlice = projectedPoints.filter { it.along in startAlong..endAlong }
+            val pointsInSlice = sliceBuckets[sliceIndex]
             val metrics = evaluateSlice(pointsInSlice)
 
             sliceAreas[sliceIndex] = metrics.area

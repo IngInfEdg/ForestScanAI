@@ -38,8 +38,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import android.os.SystemClock
+import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sqrt
 
@@ -65,6 +68,17 @@ class ScanViewModel(
     private val appVersionCode: Long = 0L,
     private val appVersionDisplay: String = ""
 ) : ViewModel() {
+    private enum class VolumePointSource(val label: String) {
+        DETECTED_PILE("pilePoints"),
+        SESSION_FALLBACK("fallback_session"),
+        REFINED_SEGMENTATION("refinedPilePoints")
+    }
+
+    private data class VolumePointSelection(
+        val points: List<Position>,
+        val source: VolumePointSource
+    )
+
     private val segmenter: GroundPileSegmenter = GroundPileSegmenter(axisEstimator)
     private val reviewBuilder: PointCloudReviewModelBuilder = PointCloudReviewModelBuilder()
 
@@ -74,7 +88,9 @@ class ScanViewModel(
     private val _finalResult = MutableStateFlow<ScanSessionResult?>(null)
     val finalResult = _finalResult.asStateFlow()
 
-    val points = mutableStateListOf<Position>()
+    val sessionAcceptedPoints = mutableStateListOf<Position>()
+    val liveVisualizationPoints = mutableStateListOf<Position>()
+    val points get() = sessionAcceptedPoints
 
     private val voxelGrid = mutableSetOf<String>()
     private val trajectory = mutableStateListOf<Location>()
@@ -85,13 +101,23 @@ class ScanViewModel(
 
     private var startPos: Position? = null
     private var gpsJob: Job? = null
+    private var measurementJob: Job? = null
     private var lastDetectionDebug: Map<String, String> = emptyMap()
     private var lastDetection = pileObjectDetector.detect(emptyList())
     private var lastDetectionPointCount = 0
     private var lastDetectionObserverCount = 0
     private var lastStateRefreshAtMs = 0L
     private var lastLiveScanResult = com.forest.scanai.domain.model.ScanResult(0.0, emptyList())
-    private var frameCounter = 0
+    private var currentVolumePointSource = VolumePointSource.SESSION_FALLBACK
+    private var lastTrackingState: com.google.ar.core.TrackingState? = null
+    private var lastUiPublishAtMs = 0L
+    private var lastLiveCloudPublishAtMs = 0L
+    private val measurementTickMs = 320L
+    private val uiPublishThrottleMs = 320L
+    private val liveCloudPublishThrottleMs = 220L
+    private val maxSessionAcceptedPoints = 24000
+    private val trimSessionPointChunk = 3500
+    private val maxVoxelEntries = 90000
     private var configuredReferenceObject: ReferenceObject? = ReferenceObject(
         id = "default_bar_2m",
         type = ReferenceObjectType.BAR_2M,
@@ -104,15 +130,21 @@ class ScanViewModel(
         manualReferenceObservedLengthMeters = observedLengthMeters?.takeIf { it > 0.0 }
     }
 
-    private fun selectPilePreferredPoints(
+    private fun selectVolumeInputPoints(
         detection: com.forest.scanai.domain.engine.PileDetectionResult,
         fallbackPoints: List<Position>,
         minPilePoints: Int
-    ): List<Position> {
+    ): VolumePointSelection {
         return if (detection.pilePoints.size >= minPilePoints) {
-            detection.pilePoints
+            VolumePointSelection(
+                points = detection.pilePoints,
+                source = VolumePointSource.DETECTED_PILE
+            )
         } else {
-            fallbackPoints
+            VolumePointSelection(
+                points = fallbackPoints,
+                source = VolumePointSource.SESSION_FALLBACK
+            )
         }
     }
 
@@ -141,22 +173,36 @@ class ScanViewModel(
                 refreshMeasurementState(force = true)
             }
         }
+
+        measurementJob = viewModelScope.launch {
+            while (isActive && _uiState.value.isMeasuring) {
+                runMeasurementTick()
+                delay(measurementTickMs)
+            }
+        }
     }
 
     private fun stopMeasurement() {
         gpsJob?.cancel()
+        measurementJob?.cancel()
 
-        val currentPoints = points.toList()
+        val currentPoints = sessionAcceptedPoints.toList()
         val detection = getDetectionSnapshot(currentPoints, observerPath.toList(), force = true)
-        val primaryPilePoints = selectPilePreferredPoints(
+        val primarySelection = selectVolumeInputPoints(
             detection = detection,
             fallbackPoints = currentPoints,
             minPilePoints = 120
         )
+        val primaryPilePoints = primarySelection.points
 
         // Refinador opcional: GroundPileSegmenter queda como fallback para mejorar visualización 3D.
         val segmented = segmenter.segment(primaryPilePoints)
         val refinedPilePoints = segmented?.pilePoints?.takeIf { it.isNotEmpty() } ?: primaryPilePoints
+        val finalVolumeSource = if (segmented?.pilePoints?.isNotEmpty() == true) {
+            VolumePointSource.REFINED_SEGMENTATION
+        } else {
+            primarySelection.source
+        }
         val refinedGroundPoints = segmented?.groundPoints ?: detection.groundPoints
 
         val coverageResult = coverageEvaluator.evaluateFromObserverPath(
@@ -377,7 +423,13 @@ class ScanViewModel(
             "auto_completion_candidate" to stateDecision.autoCompletionCandidate.toString(),
             "volume_is_stable" to volumeStability.isStable.toString(),
             "recent_useful_points_growth_ratio" to String.format("%.3f", computeRecentUsefulPointGrowthRatio()),
-            "recent_volume_delta_ratio" to String.format("%.3f", computeRecentVolumeDeltaRatio())
+            "recent_volume_delta_ratio" to String.format("%.3f", computeRecentVolumeDeltaRatio()),
+            "visual_count" to liveVisualizationPoints.size.toString(),
+            "session_count" to sessionAcceptedPoints.size.toString(),
+            "segmented_count" to refinedPilePoints.size.toString(),
+            "volume_input_count" to refinedPilePoints.size.toString(),
+            "review_count" to (reviewModel?.points?.size ?: 0).toString(),
+            "source_of_volume_points" to finalVolumeSource.label
         ) + result.debugInfo
 
         _finalResult.value = ScanSessionResult(
@@ -421,6 +473,12 @@ class ScanViewModel(
             referenceBarMeasurement = referenceMeasurement,
             scaleValidationScore = referenceMeasurement?.scaleValidationScore ?: 0f,
             volumeStabilityScore = volumeStability.stabilityScore.toFloat(),
+            sourceOfVolumePoints = finalVolumeSource.label,
+            visualCount = liveVisualizationPoints.size,
+            sessionCount = sessionAcceptedPoints.size,
+            segmentedCount = refinedPilePoints.size,
+            volumeInputCount = refinedPilePoints.size,
+            reviewCount = reviewModel?.points?.size ?: 0,
             appVersionName = appVersionName,
             appVersionCode = appVersionCode,
             appVersionDisplay = appVersionDisplay
@@ -442,13 +500,21 @@ class ScanViewModel(
                 diagnostics = diagnostics,
                 canReviewMeasurement = true,
                 canFinishMeasurement = stateDecision.canFinish,
+                volumeInputSource = finalVolumeSource.label,
+                sessionPointCount = sessionAcceptedPoints.size,
+                volumeInputPointCount = refinedPilePoints.size,
+                liveVisualizationPointCount = liveVisualizationPoints.size,
                 error = null
             )
         }
     }
 
     fun onFrameUpdated(frame: com.google.ar.core.Frame) {
-        _uiState.update { it.copy(trackingState = frame.camera.trackingState) }
+        val trackingState = frame.camera.trackingState
+        if (trackingState != lastTrackingState) {
+            lastTrackingState = trackingState
+            _uiState.update { it.copy(trackingState = trackingState) }
+        }
         if (!_uiState.value.isMeasuring) return
 
         val cameraPose = frame.camera.pose
@@ -460,48 +526,68 @@ class ScanViewModel(
         }
 
         val newPoints = processor.extractFilteredPoints(frame, currentPos, voxelGrid)
-        if (newPoints.isNotEmpty()) points.addAll(newPoints)
+        if (newPoints.isNotEmpty()) {
+            sessionAcceptedPoints.addAll(newPoints)
+            trimSessionCloudIfNeeded()
+        }
+    }
 
-        val currentPoints = points.toList()
-        val detection = getDetectionSnapshot(currentPoints, observerPath.toList())
-        val measurementPoints = selectPilePreferredPoints(
+    private fun runMeasurementTick() {
+        if (!_uiState.value.isMeasuring) return
+        val currentPoints = sessionAcceptedPoints.toList()
+        if (currentPoints.isEmpty()) return
+
+        val observerSnapshot = observerPath.toList()
+        val detection = getDetectionSnapshot(currentPoints, observerSnapshot)
+        val volumeSelection = selectVolumeInputPoints(
             detection = detection,
             fallbackPoints = currentPoints,
             minPilePoints = 80
         )
+        currentVolumePointSource = volumeSelection.source
 
-        frameCounter++
-        val calcResult = if (frameCounter % 2 == 0) {
-            calculator.calculate(measurementPoints).also { lastLiveScanResult = it }
-        } else {
-            lastLiveScanResult
-        }
+        val calcResult = calculator.calculate(volumeSelection.points).also { lastLiveScanResult = it }
         lastDetectionDebug = detection.debugInfo + mapOf(
             "raw_points" to processor.lastStats.rawPoints.toString(),
             "sampled_points" to processor.lastStats.sampledPoints.toString(),
             "accepted_points_live" to processor.lastStats.acceptedPoints.toString(),
-            "measurement_points" to measurementPoints.size.toString()
+            "measurement_points" to volumeSelection.points.size.toString(),
+            "source_of_volume_points" to currentVolumePointSource.label
         )
 
-        val rawDist = sqrt(
-            (currentPos.x - startPos!!.x).toDouble().pow(2.0) +
-                (currentPos.z - startPos!!.z).toDouble().pow(2.0)
-        ) * params.distanceCorrectionFactor
+        val currentPos = observerPath.lastOrNull()
+        val start = startPos
+        val rawDist = if (currentPos != null && start != null) {
+            sqrt(
+                (currentPos.x - start.x).toDouble().pow(2.0) +
+                    (currentPos.z - start.z).toDouble().pow(2.0)
+            ) * params.distanceCorrectionFactor
+        } else {
+            _uiState.value.distance
+        }
 
-        _uiState.update {
-            it.copy(
-                stereoVolume = calcResult.volume,
-                netVolume = calcResult.netVolumeEstimate,
-                distance = if (it.distance == 0.0) rawDist else it.distance + params.emaAlpha * (rawDist - it.distance),
-                topPoints = calcResult.topPoints
-            )
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastUiPublishAtMs >= uiPublishThrottleMs) {
+            lastUiPublishAtMs = now
+            _uiState.update {
+                it.copy(
+                    stereoVolume = calcResult.volume,
+                    netVolume = calcResult.netVolumeEstimate,
+                    distance = if (it.distance == 0.0) rawDist else it.distance + params.emaAlpha * (rawDist - it.distance),
+                    topPoints = calcResult.topPoints,
+                    volumeInputSource = currentVolumePointSource.label,
+                    sessionPointCount = sessionAcceptedPoints.size,
+                    volumeInputPointCount = volumeSelection.points.size
+                )
+            }
         }
 
         volumeHistory.addLast(calcResult.volume)
         if (volumeHistory.size > 20) volumeHistory.removeFirst()
-        usefulPointHistory.addLast(measurementPoints.size)
+        usefulPointHistory.addLast(volumeSelection.points.size)
         if (usefulPointHistory.size > 20) usefulPointHistory.removeFirst()
 
+        publishLiveVisualizationPoints(volumeSelection.points)
         refreshMeasurementState()
     }
 
@@ -510,13 +596,15 @@ class ScanViewModel(
         if (!force && now - lastStateRefreshAtMs < 250L) return
         lastStateRefreshAtMs = now
 
-        val currentPoints = points.toList()
+        val currentPoints = sessionAcceptedPoints.toList()
         val detection = getDetectionSnapshot(currentPoints, observerPath.toList())
-        val evaluationPoints = selectPilePreferredPoints(
+        val evaluationSelection = selectVolumeInputPoints(
             detection = detection,
             fallbackPoints = currentPoints,
             minPilePoints = 80
         )
+        val evaluationPoints = evaluationSelection.points
+        currentVolumePointSource = evaluationSelection.source
 
         val coverageResult = coverageEvaluator.evaluateFromObserverPath(
             observerPath = observerPath.toList(),
@@ -641,9 +729,59 @@ class ScanViewModel(
                 diagnostics = diagnostics,
                 canReviewMeasurement = stateDecision.canReview,
                 canFinishMeasurement = (stateDecision.canFinish || stateDecision.autoCompletionCandidate) &&
-                    (adjustedCompleteness == CompletenessLevel.ACCEPTABLE || adjustedCompleteness == CompletenessLevel.COMPLETE)
+                    (adjustedCompleteness == CompletenessLevel.ACCEPTABLE || adjustedCompleteness == CompletenessLevel.COMPLETE),
+                volumeInputSource = currentVolumePointSource.label,
+                sessionPointCount = sessionAcceptedPoints.size,
+                volumeInputPointCount = evaluationPoints.size,
+                liveVisualizationPointCount = liveVisualizationPoints.size
             )
         }
+    }
+
+    private fun trimSessionCloudIfNeeded() {
+        if (sessionAcceptedPoints.size <= maxSessionAcceptedPoints && voxelGrid.size <= maxVoxelEntries) return
+
+        val trimCount = minOf(trimSessionPointChunk, sessionAcceptedPoints.size / 4)
+        if (trimCount <= 0) return
+
+        repeat(trimCount) { sessionAcceptedPoints.removeAt(0) }
+        rebuildVoxelGrid()
+    }
+
+    private fun rebuildVoxelGrid() {
+        voxelGrid.clear()
+        val effectiveVoxel = params.voxelSize.coerceAtMost(0.10f)
+        sessionAcceptedPoints.forEach { point ->
+            val voxelX = (point.x / effectiveVoxel).toInt()
+            val voxelY = (point.y / effectiveVoxel).toInt()
+            val voxelZ = (point.z / effectiveVoxel).toInt()
+            voxelGrid.add("$voxelX,$voxelY,$voxelZ")
+        }
+    }
+
+    private fun publishLiveVisualizationPoints(volumeInputPoints: List<Position>) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastLiveCloudPublishAtMs < liveCloudPublishThrottleMs) return
+        lastLiveCloudPublishAtMs = now
+
+        val source = if (volumeInputPoints.isNotEmpty()) volumeInputPoints else sessionAcceptedPoints
+        val maxVisualPoints = when {
+            sessionAcceptedPoints.size > 18000 -> 800
+            sessionAcceptedPoints.size > 12000 -> 1200
+            sessionAcceptedPoints.size > 7000 -> 1600
+            else -> 2200
+        }
+        val step = max(1, source.size / maxVisualPoints)
+        val sampled = ArrayList<Position>(maxVisualPoints)
+        var index = 0
+        while (index < source.size && sampled.size < maxVisualPoints) {
+            sampled.add(source[index])
+            index += step
+        }
+
+        liveVisualizationPoints.clear()
+        liveVisualizationPoints.addAll(sampled.takeLast(maxVisualPoints))
+        _uiState.update { it.copy(liveVisualizationPointCount = liveVisualizationPoints.size) }
     }
 
     private fun buildDiagnostics(
@@ -747,7 +885,8 @@ class ScanViewModel(
     }
 
     fun reset() {
-        points.clear()
+        sessionAcceptedPoints.clear()
+        liveVisualizationPoints.clear()
         voxelGrid.clear()
         trajectory.clear()
         observerPath.clear()
@@ -756,6 +895,7 @@ class ScanViewModel(
         topCoverageHistory.clear()
         startPos = null
         gpsJob?.cancel()
+        measurementJob?.cancel()
         _uiState.value = ScanUiState(appVersionDisplay = appVersionDisplay)
         _finalResult.value = null
         lastDetectionDebug = emptyMap()
@@ -764,7 +904,10 @@ class ScanViewModel(
         lastDetectionObserverCount = 0
         lastStateRefreshAtMs = 0L
         lastLiveScanResult = com.forest.scanai.domain.model.ScanResult(0.0, emptyList())
-        frameCounter = 0
+        currentVolumePointSource = VolumePointSource.SESSION_FALLBACK
+        lastTrackingState = null
+        lastUiPublishAtMs = 0L
+        lastLiveCloudPublishAtMs = 0L
     }
 
     private fun getDetectionSnapshot(

@@ -99,6 +99,12 @@ fun MeasurementCompactCard(
             style = MaterialTheme.typography.bodyMedium
         )
 
+        Text(
+            text = "Cálculo: ${uiState.volumeInputSource} · input=${uiState.volumeInputPointCount} · visual=${uiState.liveVisualizationPointCount}",
+            color = Color(0xFFB3E5FC),
+            style = MaterialTheme.typography.bodySmall
+        )
+
         HorizontalDivider(color = Color.Gray.copy(alpha = 0.45f))
         Text(
             text = if (showDiagnostics) "Ocultar diagnóstico" else "Ver diagnóstico",
