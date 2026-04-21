@@ -57,6 +57,12 @@ data class ScanSessionResult(
     val referenceBarMeasurement: ReferenceBarMeasurement? = null,
     val scaleValidationScore: Float = 0f,
     val volumeStabilityScore: Float = 0f,
+    val sourceOfVolumePoints: String = "N/A",
+    val visualCount: Int = 0,
+    val sessionCount: Int = 0,
+    val segmentedCount: Int = 0,
+    val volumeInputCount: Int = 0,
+    val reviewCount: Int = 0,
 
     val appVersionName: String = "",
     val appVersionCode: Long = 0,

@@ -32,7 +32,7 @@ class CsvExporter(private val context: Context) {
             val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), fileName)
             FileWriter(file).use { writer ->
                 writer.append(
-                    "Timestamp,AppVersion,Lat,Lon,Distance,StereoVol,NetVol,StereoVolFinal,NetVolFinal,VolumeGeometricBase,VolumeGeometricCorrected,VolumeStereoTemporalSmoothed,StereoObservationFactor,EdgeRecoveryFactor,TemporalAlpha,TemporalBoundedRatio,VolumeNetEstimate,TotalPoints,RawPoints,AcceptedPoints,GroundPoints,NonGroundPoints,PilePoints,Clusters,SelectedCluster,DetectionQuality,DetectionConfidence,DetectionReasons,DominanceScore,HeightScore,CompactnessScore,ObserverConsistencyScore,GroundSeparationScore,EstimatedHeight,BoundingBox,BoundingBoxFinal,MaxHeight,P95Height,MeanHeight,VerticalCoverageScore,VerticalWeakBands,VerticalReasons,TopCoverageScore,TopPointCount,TopBandDensity,TopCoverageState,TopCoverageTrend,TopCoverageTemporalStability,TrajectoryQualityScore,VolumeStabilityScore,VolumeIsStable,VolumeVariationRatio,VolumeIqrRatio,VolumeMadRatio,VolumeDriftRatio,RecentUsefulPointsGrowthRatio,RecentVolumeDeltaRatio,ScaleValidationScore,ReferenceExpectedM,ReferenceObservedM,ReferenceRelativeError,ReferenceStatus,ReferenceNotes,ReferenceObservationSource,AutoCompletionCandidate,FallbackReasons\n"
+                        "Timestamp,AppVersion,Lat,Lon,Distance,StereoVol,NetVol,StereoVolFinal,NetVolFinal,VolumeGeometricBase,VolumeGeometricCorrected,VolumeStereoTemporalSmoothed,StereoObservationFactor,EdgeRecoveryFactor,TemporalAlpha,TemporalBoundedRatio,VolumeNetEstimate,TotalPoints,RawPoints,AcceptedPoints,GroundPoints,NonGroundPoints,PilePoints,Clusters,SelectedCluster,DetectionQuality,DetectionConfidence,DetectionReasons,DominanceScore,HeightScore,CompactnessScore,ObserverConsistencyScore,GroundSeparationScore,EstimatedHeight,BoundingBox,BoundingBoxFinal,MaxHeight,P95Height,MeanHeight,VerticalCoverageScore,VerticalWeakBands,VerticalReasons,TopCoverageScore,TopPointCount,TopBandDensity,TopCoverageState,TopCoverageTrend,TopCoverageTemporalStability,TrajectoryQualityScore,VolumeStabilityScore,VolumeIsStable,VolumeVariationRatio,VolumeIqrRatio,VolumeMadRatio,VolumeDriftRatio,RecentUsefulPointsGrowthRatio,RecentVolumeDeltaRatio,ScaleValidationScore,ReferenceExpectedM,ReferenceObservedM,ReferenceRelativeError,ReferenceStatus,ReferenceNotes,ReferenceObservationSource,AutoCompletionCandidate,VisualCount,SessionCount,SegmentedCount,VolumeInputCount,ReviewCount,SourceOfVolumePoints,FallbackReasons\n"
                 )
 
                 val debug = result?.detectionDebugInfo.orEmpty()
@@ -42,7 +42,7 @@ class CsvExporter(private val context: Context) {
                 val netVolForExport = result?.netVolumeEstimate ?: uiState.netVolume
 
                 writer.append(
-                    listOf(
+                        listOf(
                         ts,
                         appVersionDisplay,
                         lat.toString(),
@@ -106,11 +106,17 @@ class CsvExporter(private val context: Context) {
                         debug["reference_relative_error"] ?: "",
                         debug["reference_status"] ?: "",
                         debug["reference_notes"] ?: "",
-                        debug["reference_observation_source"] ?: "",
-                        debug["auto_completion_candidate"] ?: "",
-                        fallbackReasons
-                    ).joinToString(",") { csvSafe(it) } + "\n"
-                )
+                            debug["reference_observation_source"] ?: "",
+                            debug["auto_completion_candidate"] ?: "",
+                            result?.visualCount?.toString() ?: "",
+                            result?.sessionCount?.toString() ?: "",
+                            result?.segmentedCount?.toString() ?: "",
+                            result?.volumeInputCount?.toString() ?: "",
+                            result?.reviewCount?.toString() ?: "",
+                            result?.sourceOfVolumePoints ?: "",
+                            fallbackReasons
+                        ).joinToString(",") { csvSafe(it) } + "\n"
+                    )
             }
             file.absolutePath
         } catch (e: Exception) {
@@ -131,7 +137,7 @@ class CsvExporter(private val context: Context) {
         return try {
             context.contentResolver.openOutputStream(destinationUri, "wt")?.bufferedWriter()?.use { writer ->
                 writer.append(
-                    "Timestamp,AppVersion,Lat,Lon,Distance,StereoVol,NetVol,StereoVolFinal,NetVolFinal,VolumeGeometricBase,VolumeGeometricCorrected,VolumeStereoTemporalSmoothed,StereoObservationFactor,EdgeRecoveryFactor,TemporalAlpha,TemporalBoundedRatio,VolumeNetEstimate,TotalPoints,RawPoints,AcceptedPoints,GroundPoints,NonGroundPoints,PilePoints,Clusters,SelectedCluster,DetectionQuality,DetectionConfidence,DetectionReasons,DominanceScore,HeightScore,CompactnessScore,ObserverConsistencyScore,GroundSeparationScore,EstimatedHeight,BoundingBox,BoundingBoxFinal,MaxHeight,P95Height,MeanHeight,VerticalCoverageScore,VerticalWeakBands,VerticalReasons,TopCoverageScore,TopPointCount,TopBandDensity,TopCoverageState,TopCoverageTrend,TopCoverageTemporalStability,TrajectoryQualityScore,VolumeStabilityScore,VolumeIsStable,VolumeVariationRatio,VolumeIqrRatio,VolumeMadRatio,VolumeDriftRatio,RecentUsefulPointsGrowthRatio,RecentVolumeDeltaRatio,ScaleValidationScore,ReferenceExpectedM,ReferenceObservedM,ReferenceRelativeError,ReferenceStatus,ReferenceNotes,ReferenceObservationSource,AutoCompletionCandidate,FallbackReasons\n"
+                        "Timestamp,AppVersion,Lat,Lon,Distance,StereoVol,NetVol,StereoVolFinal,NetVolFinal,VolumeGeometricBase,VolumeGeometricCorrected,VolumeStereoTemporalSmoothed,StereoObservationFactor,EdgeRecoveryFactor,TemporalAlpha,TemporalBoundedRatio,VolumeNetEstimate,TotalPoints,RawPoints,AcceptedPoints,GroundPoints,NonGroundPoints,PilePoints,Clusters,SelectedCluster,DetectionQuality,DetectionConfidence,DetectionReasons,DominanceScore,HeightScore,CompactnessScore,ObserverConsistencyScore,GroundSeparationScore,EstimatedHeight,BoundingBox,BoundingBoxFinal,MaxHeight,P95Height,MeanHeight,VerticalCoverageScore,VerticalWeakBands,VerticalReasons,TopCoverageScore,TopPointCount,TopBandDensity,TopCoverageState,TopCoverageTrend,TopCoverageTemporalStability,TrajectoryQualityScore,VolumeStabilityScore,VolumeIsStable,VolumeVariationRatio,VolumeIqrRatio,VolumeMadRatio,VolumeDriftRatio,RecentUsefulPointsGrowthRatio,RecentVolumeDeltaRatio,ScaleValidationScore,ReferenceExpectedM,ReferenceObservedM,ReferenceRelativeError,ReferenceStatus,ReferenceNotes,ReferenceObservationSource,AutoCompletionCandidate,VisualCount,SessionCount,SegmentedCount,VolumeInputCount,ReviewCount,SourceOfVolumePoints,FallbackReasons\n"
                 )
 
                 val debug = result?.detectionDebugInfo.orEmpty()
@@ -141,7 +147,7 @@ class CsvExporter(private val context: Context) {
                 val netVolForExport = result?.netVolumeEstimate ?: uiState.netVolume
 
                 writer.append(
-                    listOf(
+                        listOf(
                         ts,
                         appVersionDisplay,
                         lat.toString(),
@@ -205,11 +211,17 @@ class CsvExporter(private val context: Context) {
                         debug["reference_relative_error"] ?: "",
                         debug["reference_status"] ?: "",
                         debug["reference_notes"] ?: "",
-                        debug["reference_observation_source"] ?: "",
-                        debug["auto_completion_candidate"] ?: "",
-                        fallbackReasons
-                    ).joinToString(",") { csvSafe(it) } + "\n"
-                )
+                            debug["reference_observation_source"] ?: "",
+                            debug["auto_completion_candidate"] ?: "",
+                            result?.visualCount?.toString() ?: "",
+                            result?.sessionCount?.toString() ?: "",
+                            result?.segmentedCount?.toString() ?: "",
+                            result?.volumeInputCount?.toString() ?: "",
+                            result?.reviewCount?.toString() ?: "",
+                            result?.sourceOfVolumePoints ?: "",
+                            fallbackReasons
+                        ).joinToString(",") { csvSafe(it) } + "\n"
+                    )
             } != null
         } catch (e: Exception) {
             Log.e("CsvExporter", "Error saving CSV to Uri: ${e.message}")

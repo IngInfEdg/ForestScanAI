@@ -51,11 +51,7 @@ fun ScanScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val finalResult by viewModel.finalResult.collectAsState()
-    val points = viewModel.points
-    val visualPoints = remember(points.size) {
-        val maxVisualPoints = 2200
-        if (points.size <= maxVisualPoints) points.toList() else points.takeLast(maxVisualPoints)
-    }
+    val visualPoints = viewModel.liveVisualizationPoints
     var viewMatrix by remember { mutableStateOf(FloatArray(16)) }
     var projMatrix by remember { mutableStateOf(FloatArray(16)) }
 
@@ -334,6 +330,12 @@ private fun ResultOverlay(
             text = "Modelo 3D: ${formatDouble(result.reviewModelWidth.toDouble())} x ${formatDouble(result.reviewModelHeight.toDouble())} x ${formatDouble(result.reviewModelDepth.toDouble())} m",
             color = Color(0xFFB3E5FC),
             style = MaterialTheme.typography.bodyMedium
+        )
+
+        Text(
+            text = "Fuente cálculo: ${result.sourceOfVolumePoints} · visual=${result.visualCount} · sesión=${result.sessionCount} · volumen=${result.volumeInputCount}",
+            color = Color(0xFF80DEEA),
+            style = MaterialTheme.typography.bodySmall
         )
 
         Text(

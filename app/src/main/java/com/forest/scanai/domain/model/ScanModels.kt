@@ -26,7 +26,11 @@ data class ScanUiState(
     val diagnostics: List<String> = emptyList(),
     val canReviewMeasurement: Boolean = false,
     val canFinishMeasurement: Boolean = false,
-    val appVersionDisplay: String = ""
+    val appVersionDisplay: String = "",
+    val volumeInputSource: String = "N/A",
+    val sessionPointCount: Int = 0,
+    val volumeInputPointCount: Int = 0,
+    val liveVisualizationPointCount: Int = 0
 )
 
 data class ScanResult(
