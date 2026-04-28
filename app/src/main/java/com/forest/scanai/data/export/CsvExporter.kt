@@ -32,7 +32,7 @@ class CsvExporter(private val context: Context) {
             val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), fileName)
             FileWriter(file).use { writer ->
                 writer.append(
-                        "Timestamp,AppVersion,Lat,Lon,Distance,StereoVol,NetVol,StereoVolFinal,NetVolFinal,VolumeGeometricBase,VolumeGeometricCorrected,VolumeStereoTemporalSmoothed,StereoObservationFactor,EdgeRecoveryFactor,TemporalAlpha,TemporalBoundedRatio,VolumeNetEstimate,TotalPoints,RawPoints,AcceptedPoints,GroundPoints,NonGroundPoints,PilePoints,Clusters,SelectedCluster,DetectionQuality,DetectionConfidence,DetectionReasons,DominanceScore,HeightScore,CompactnessScore,ObserverConsistencyScore,GroundSeparationScore,EstimatedHeight,BoundingBox,BoundingBoxFinal,MaxHeight,P95Height,MeanHeight,VerticalCoverageScore,VerticalWeakBands,VerticalReasons,TopCoverageScore,TopPointCount,TopBandDensity,TopCoverageState,TopCoverageTrend,TopCoverageTemporalStability,TrajectoryQualityScore,VolumeStabilityScore,VolumeIsStable,VolumeVariationRatio,VolumeIqrRatio,VolumeMadRatio,VolumeDriftRatio,RecentUsefulPointsGrowthRatio,RecentVolumeDeltaRatio,ScaleValidationScore,ReferenceExpectedM,ReferenceObservedM,ReferenceRelativeError,ReferenceStatus,ReferenceNotes,ReferenceObservationSource,AutoCompletionCandidate,VisualCount,SessionCount,SegmentedCount,VolumeInputCount,ReviewCount,SourceOfVolumePoints,FallbackReasons\n"
+                        "Timestamp,AppVersion,Lat,Lon,Distance,StereoVol,NetVol,StereoVolFinal,NetVolFinal,VolumeGeometricBase,VolumeGeometricCorrected,VolumeStereoTemporalSmoothed,StereoObservationFactor,EdgeRecoveryFactor,TemporalAlpha,TemporalBoundedRatio,VolumeNetEstimate,VolumeRouteARefinedRaw,VolumeRouteARefinedCorrected,VolumeRouteARefinedStereo,VolumeRouteARefinedNet,VolumeRouteBDetectedRaw,VolumeRouteBDetectedCorrected,VolumeRouteBDetectedStereo,VolumeRouteBDetectedNet,RouteAInputCount,RouteBInputCount,RouteASource,RouteBSource,RouteBMinusRouteA,RouteBVsRouteARatio,ABTestEnabled,TotalPoints,RawPoints,AcceptedPoints,GroundPoints,NonGroundPoints,PilePoints,DetectionPilePointsCount,RefinedPilePointsCount,Clusters,SelectedCluster,DetectionQuality,DetectionConfidence,DetectionReasons,DominanceScore,HeightScore,CompactnessScore,ObserverConsistencyScore,GroundSeparationScore,EstimatedHeight,BoundingBox,BoundingBoxFinal,MaxHeight,P95Height,MeanHeight,VerticalCoverageScore,VerticalWeakBands,VerticalReasons,TopCoverageScore,TopPointCount,TopBandDensity,TopCoverageState,TopCoverageTrend,TopCoverageTemporalStability,TrajectoryQualityScore,VolumeStabilityScore,VolumeIsStable,VolumeVariationRatio,VolumeIqrRatio,VolumeMadRatio,VolumeDriftRatio,RecentUsefulPointsGrowthRatio,RecentVolumeDeltaRatio,ScaleValidationScore,ReferenceExpectedM,ReferenceObservedM,ReferenceRelativeError,ReferenceStatus,ReferenceNotes,ReferenceObservationSource,AutoCompletionCandidate,VisualCount,SessionCount,SegmentedCount,VolumeInputCount,ReviewCount,SourceOfVolumePoints,SourceOfVolumePointsOfficial,FallbackReasons\n"
                 )
 
                 val debug = result?.detectionDebugInfo.orEmpty()
@@ -60,12 +60,29 @@ class CsvExporter(private val context: Context) {
                         debug["volume_temporal_alpha"] ?: "",
                         debug["volume_temporal_bounded_ratio_vs_corrected"] ?: "",
                         debug["volume_net_estimate"] ?: "",
+                        result?.volumeRouteARefinedRaw?.toString() ?: "",
+                        result?.volumeRouteARefinedCorrected?.toString() ?: "",
+                        result?.volumeRouteARefinedStereo?.toString() ?: "",
+                        result?.volumeRouteARefinedNet?.toString() ?: "",
+                        result?.volumeRouteBDetectedRaw?.toString() ?: "",
+                        result?.volumeRouteBDetectedCorrected?.toString() ?: "",
+                        result?.volumeRouteBDetectedStereo?.toString() ?: "",
+                        result?.volumeRouteBDetectedNet?.toString() ?: "",
+                        result?.routeAInputCount?.toString() ?: "",
+                        result?.routeBInputCount?.toString() ?: "",
+                        result?.routeASource ?: "",
+                        result?.routeBSource ?: "",
+                        debug["route_b_minus_route_a"] ?: "",
+                        debug["route_b_vs_route_a_ratio"] ?: "",
+                        debug["ab_test_enabled"] ?: "",
                         result?.pointsCount?.toString() ?: "",
                         debug["raw_points"] ?: "",
                         debug["accepted_points"] ?: "",
                         debug["ground_points"] ?: "",
                         debug["non_ground_points"] ?: "",
                         debug["pile_points"] ?: "",
+                        debug["detection_pile_points_count"] ?: "",
+                        debug["refined_pile_points_count"] ?: "",
                         debug["clusters"] ?: "",
                         debug["selected_cluster"] ?: "",
                         result?.pileDetectionQuality ?: "",
@@ -114,6 +131,7 @@ class CsvExporter(private val context: Context) {
                             result?.volumeInputCount?.toString() ?: "",
                             result?.reviewCount?.toString() ?: "",
                             result?.sourceOfVolumePoints ?: "",
+                            debug["source_of_volume_points_official"] ?: "",
                             fallbackReasons
                         ).joinToString(",") { csvSafe(it) } + "\n"
                     )
@@ -137,7 +155,7 @@ class CsvExporter(private val context: Context) {
         return try {
             context.contentResolver.openOutputStream(destinationUri, "wt")?.bufferedWriter()?.use { writer ->
                 writer.append(
-                        "Timestamp,AppVersion,Lat,Lon,Distance,StereoVol,NetVol,StereoVolFinal,NetVolFinal,VolumeGeometricBase,VolumeGeometricCorrected,VolumeStereoTemporalSmoothed,StereoObservationFactor,EdgeRecoveryFactor,TemporalAlpha,TemporalBoundedRatio,VolumeNetEstimate,TotalPoints,RawPoints,AcceptedPoints,GroundPoints,NonGroundPoints,PilePoints,Clusters,SelectedCluster,DetectionQuality,DetectionConfidence,DetectionReasons,DominanceScore,HeightScore,CompactnessScore,ObserverConsistencyScore,GroundSeparationScore,EstimatedHeight,BoundingBox,BoundingBoxFinal,MaxHeight,P95Height,MeanHeight,VerticalCoverageScore,VerticalWeakBands,VerticalReasons,TopCoverageScore,TopPointCount,TopBandDensity,TopCoverageState,TopCoverageTrend,TopCoverageTemporalStability,TrajectoryQualityScore,VolumeStabilityScore,VolumeIsStable,VolumeVariationRatio,VolumeIqrRatio,VolumeMadRatio,VolumeDriftRatio,RecentUsefulPointsGrowthRatio,RecentVolumeDeltaRatio,ScaleValidationScore,ReferenceExpectedM,ReferenceObservedM,ReferenceRelativeError,ReferenceStatus,ReferenceNotes,ReferenceObservationSource,AutoCompletionCandidate,VisualCount,SessionCount,SegmentedCount,VolumeInputCount,ReviewCount,SourceOfVolumePoints,FallbackReasons\n"
+                        "Timestamp,AppVersion,Lat,Lon,Distance,StereoVol,NetVol,StereoVolFinal,NetVolFinal,VolumeGeometricBase,VolumeGeometricCorrected,VolumeStereoTemporalSmoothed,StereoObservationFactor,EdgeRecoveryFactor,TemporalAlpha,TemporalBoundedRatio,VolumeNetEstimate,VolumeRouteARefinedRaw,VolumeRouteARefinedCorrected,VolumeRouteARefinedStereo,VolumeRouteARefinedNet,VolumeRouteBDetectedRaw,VolumeRouteBDetectedCorrected,VolumeRouteBDetectedStereo,VolumeRouteBDetectedNet,RouteAInputCount,RouteBInputCount,RouteASource,RouteBSource,RouteBMinusRouteA,RouteBVsRouteARatio,ABTestEnabled,TotalPoints,RawPoints,AcceptedPoints,GroundPoints,NonGroundPoints,PilePoints,DetectionPilePointsCount,RefinedPilePointsCount,Clusters,SelectedCluster,DetectionQuality,DetectionConfidence,DetectionReasons,DominanceScore,HeightScore,CompactnessScore,ObserverConsistencyScore,GroundSeparationScore,EstimatedHeight,BoundingBox,BoundingBoxFinal,MaxHeight,P95Height,MeanHeight,VerticalCoverageScore,VerticalWeakBands,VerticalReasons,TopCoverageScore,TopPointCount,TopBandDensity,TopCoverageState,TopCoverageTrend,TopCoverageTemporalStability,TrajectoryQualityScore,VolumeStabilityScore,VolumeIsStable,VolumeVariationRatio,VolumeIqrRatio,VolumeMadRatio,VolumeDriftRatio,RecentUsefulPointsGrowthRatio,RecentVolumeDeltaRatio,ScaleValidationScore,ReferenceExpectedM,ReferenceObservedM,ReferenceRelativeError,ReferenceStatus,ReferenceNotes,ReferenceObservationSource,AutoCompletionCandidate,VisualCount,SessionCount,SegmentedCount,VolumeInputCount,ReviewCount,SourceOfVolumePoints,SourceOfVolumePointsOfficial,FallbackReasons\n"
                 )
 
                 val debug = result?.detectionDebugInfo.orEmpty()
@@ -165,12 +183,29 @@ class CsvExporter(private val context: Context) {
                         debug["volume_temporal_alpha"] ?: "",
                         debug["volume_temporal_bounded_ratio_vs_corrected"] ?: "",
                         debug["volume_net_estimate"] ?: "",
+                        result?.volumeRouteARefinedRaw?.toString() ?: "",
+                        result?.volumeRouteARefinedCorrected?.toString() ?: "",
+                        result?.volumeRouteARefinedStereo?.toString() ?: "",
+                        result?.volumeRouteARefinedNet?.toString() ?: "",
+                        result?.volumeRouteBDetectedRaw?.toString() ?: "",
+                        result?.volumeRouteBDetectedCorrected?.toString() ?: "",
+                        result?.volumeRouteBDetectedStereo?.toString() ?: "",
+                        result?.volumeRouteBDetectedNet?.toString() ?: "",
+                        result?.routeAInputCount?.toString() ?: "",
+                        result?.routeBInputCount?.toString() ?: "",
+                        result?.routeASource ?: "",
+                        result?.routeBSource ?: "",
+                        debug["route_b_minus_route_a"] ?: "",
+                        debug["route_b_vs_route_a_ratio"] ?: "",
+                        debug["ab_test_enabled"] ?: "",
                         result?.pointsCount?.toString() ?: "",
                         debug["raw_points"] ?: "",
                         debug["accepted_points"] ?: "",
                         debug["ground_points"] ?: "",
                         debug["non_ground_points"] ?: "",
                         debug["pile_points"] ?: "",
+                        debug["detection_pile_points_count"] ?: "",
+                        debug["refined_pile_points_count"] ?: "",
                         debug["clusters"] ?: "",
                         debug["selected_cluster"] ?: "",
                         result?.pileDetectionQuality ?: "",
@@ -219,6 +254,7 @@ class CsvExporter(private val context: Context) {
                             result?.volumeInputCount?.toString() ?: "",
                             result?.reviewCount?.toString() ?: "",
                             result?.sourceOfVolumePoints ?: "",
+                            debug["source_of_volume_points_official"] ?: "",
                             fallbackReasons
                         ).joinToString(",") { csvSafe(it) } + "\n"
                     )
