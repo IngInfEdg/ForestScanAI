@@ -323,6 +323,10 @@ class ScanViewModel(
         }
 
         val result = calculator.calculate(refinedPilePoints)
+        val routeBInputPoints = detection.pilePoints.takeIf { it.isNotEmpty() } ?: primaryPilePoints
+        val routeBResult = VolumeCalculator(params, axisEstimator).calculate(routeBInputPoints)
+        val routeBMinusRouteA = routeBResult.volume - result.volume
+        val routeBVsRouteARatio = if (result.volume > 0.0) routeBResult.volume / result.volume else 0.0
         val axisResult = axisEstimator.estimate(refinedPilePoints)
         val cloudQuality = pileCoverageQualityEvaluator.evaluate(refinedPilePoints)
 
@@ -387,7 +391,10 @@ class ScanViewModel(
             "raw_points" to currentPoints.size.toString(),
             "accepted_points" to currentPoints.size.toString(),
             "pile_points" to refinedPilePoints.size.toString(),
+            "detection_pile_points_count" to detection.pilePoints.size.toString(),
+            "refined_pile_points_count" to refinedPilePoints.size.toString(),
             "ground_points" to refinedGroundPoints.size.toString(),
+            "non_ground_points" to detection.nonGroundPoints.size.toString(),
             "bounding_box_final" to formatBounds(finalBoundingBox),
             "max_height" to String.format("%.3f", maxHeight),
             "p95_height" to String.format("%.3f", heightSummary?.p95Height ?: maxHeight),
@@ -396,6 +403,20 @@ class ScanViewModel(
             "volume_geometric_corrected" to String.format("%.3f", result.geometricVolumeCorrected),
             "volume_stereo_smoothed" to String.format("%.3f", result.stereoVolumeSmoothed),
             "volume_net_estimate" to String.format("%.3f", result.netVolumeEstimate),
+            "volume_route_a_refined_raw" to String.format("%.3f", result.geometricVolumeRaw),
+            "volume_route_a_refined_corrected" to String.format("%.3f", result.geometricVolumeCorrected),
+            "volume_route_a_refined_stereo" to String.format("%.3f", result.volume),
+            "volume_route_a_refined_net" to String.format("%.3f", result.netVolumeEstimate),
+            "volume_route_b_detected_raw" to String.format("%.3f", routeBResult.geometricVolumeRaw),
+            "volume_route_b_detected_corrected" to String.format("%.3f", routeBResult.geometricVolumeCorrected),
+            "volume_route_b_detected_stereo" to String.format("%.3f", routeBResult.volume),
+            "volume_route_b_detected_net" to String.format("%.3f", routeBResult.netVolumeEstimate),
+            "route_a_input_count" to refinedPilePoints.size.toString(),
+            "route_b_input_count" to routeBInputPoints.size.toString(),
+            "route_a_source" to "refinedPilePoints",
+            "route_b_source" to "detectionPilePoints",
+            "route_b_minus_route_a" to String.format("%.3f", routeBMinusRouteA),
+            "route_b_vs_route_a_ratio" to String.format("%.3f", routeBVsRouteARatio),
             "detection_confidence" to String.format("%.3f", detection.detectionConfidence),
             "detection_reasons" to detection.reasons.joinToString(" | "),
             "vertical_coverage_score" to String.format("%.3f", verticalCoverage.verticalCoverageScore),
@@ -429,7 +450,9 @@ class ScanViewModel(
             "segmented_count" to refinedPilePoints.size.toString(),
             "volume_input_count" to refinedPilePoints.size.toString(),
             "review_count" to (reviewModel?.points?.size ?: 0).toString(),
-            "source_of_volume_points" to finalVolumeSource.label
+            "source_of_volume_points" to finalVolumeSource.label,
+            "source_of_volume_points_official" to finalVolumeSource.label,
+            "ab_test_enabled" to "true"
         ) + result.debugInfo
 
         _finalResult.value = ScanSessionResult(
@@ -470,6 +493,18 @@ class ScanViewModel(
             geometricVolumeCorrected = result.geometricVolumeCorrected,
             stereoVolumeSmoothed = result.stereoVolumeSmoothed,
             netVolumeEstimate = result.netVolumeEstimate,
+            volumeRouteARefinedRaw = result.geometricVolumeRaw,
+            volumeRouteARefinedCorrected = result.geometricVolumeCorrected,
+            volumeRouteARefinedStereo = result.volume,
+            volumeRouteARefinedNet = result.netVolumeEstimate,
+            volumeRouteBDetectedRaw = routeBResult.geometricVolumeRaw,
+            volumeRouteBDetectedCorrected = routeBResult.geometricVolumeCorrected,
+            volumeRouteBDetectedStereo = routeBResult.volume,
+            volumeRouteBDetectedNet = routeBResult.netVolumeEstimate,
+            routeAInputCount = refinedPilePoints.size,
+            routeBInputCount = routeBInputPoints.size,
+            routeASource = "refinedPilePoints",
+            routeBSource = "detectionPilePoints",
             referenceBarMeasurement = referenceMeasurement,
             scaleValidationScore = referenceMeasurement?.scaleValidationScore ?: 0f,
             volumeStabilityScore = volumeStability.stabilityScore.toFloat(),
